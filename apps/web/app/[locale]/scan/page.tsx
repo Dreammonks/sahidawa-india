@@ -146,9 +146,17 @@ export default function ScanPage() {
 
     const handleVerifyRef = useRef<(batch: string) => Promise<void>>(null as any);
 
+    // Abort in-flight verification only on unmount. Tying this to result state made
+    // every setBatchInput/setShowResult cancel the request that caused it (image upload).
     useEffect(() => {
         isMountedRef.current = true;
+        return () => {
+            isMountedRef.current = false;
+            abortControllerRef.current?.abort();
+        };
+    }, []);
 
+    useEffect(() => {
         const autoRetry = () => {
             if (isMountedRef.current && showResult && verifyError && batchInput) {
                 toast.info("Connection restored. Retrying verification...");
@@ -159,10 +167,6 @@ export default function ScanPage() {
         registerRetryCallback(autoRetry);
 
         return () => {
-            isMountedRef.current = false;
-            if (abortControllerRef.current) {
-                abortControllerRef.current.abort();
-            }
             unregisterRetryCallback(autoRetry);
         };
     }, [showResult, verifyError, batchInput, registerRetryCallback, unregisterRetryCallback]);
