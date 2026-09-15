@@ -5,6 +5,11 @@ import { recordScanHistory } from "@/lib/scanHistoryUtils";
 import { saveScanHistory } from "@/lib/db/scanHistory";
 import { isNetworkFailure } from "@/lib/scanQueueSync";
 import { saveVerificationResult } from "@/lib/offlineCache";
+import { isProductBarcode } from "@/lib/barcode";
+import { lookupProductByBarcode, type ProductLookupResponse } from "@/lib/api/products";
+import type { LabelInfo } from "@/components/scanner/results/ProductLookupResult";
+
+export type DisplayableProductResult = Exclude<ProductLookupResponse, { status: "invalid" }>;
 
 export function useMedicineVerification(
     abortControllerRef: RefObject<AbortController | null>,
@@ -21,6 +26,8 @@ export function useMedicineVerification(
     const [lasaMatches, setLasaMatches] = useState<LasaMatch[]>([]);
     const [showLasaConfirmation, setShowLasaConfirmation] = useState(false);
     const [pendingVerifyResult, setPendingVerifyResult] = useState<VerifyResult | null>(null);
+    const [productResult, setProductResult] = useState<DisplayableProductResult | null>(null);
+    const [labelInfo, setLabelInfo] = useState<LabelInfo | null>(null);
 
     const processVerificationResult = useCallback(
         async (result: VerifyResult, fallbackBrandName?: string) => {
@@ -83,7 +90,7 @@ export function useMedicineVerification(
 
                 setShowResult(true);
             }
-    },
+        },
         [setShowResult]
     );
 
@@ -113,8 +120,22 @@ export function useMedicineVerification(
             setShowResult(false);
             setVerifyResult(null);
             setVerifyError(null);
+            setProductResult(null);
+            setLabelInfo(null);
 
-          try {
+            try {
+                if (isProductBarcode(normalizedBatch)) {
+                    const lookup = await lookupProductByBarcode(normalizedBatch, controller.signal);
+                    if (!isMountedRef.current || controller.signal.aborted) return;
+                    if (lookup.status === "invalid") {
+                        setVerifyError(lookup.error);
+                    } else {
+                        setProductResult(lookup);
+                    }
+                    setShowResult(true);
+                    return;
+                }
+
                 const result = await verifyMedicine(normalizedBatch, controller.signal);
                 if (!isMountedRef.current || controller.signal.aborted) return;
                 await processVerificationResult(result, undefined);
@@ -164,7 +185,11 @@ export function useMedicineVerification(
         lasaMatches,
         showLasaConfirmation,
         pendingVerifyResult,
+        productResult,
+        labelInfo,
 
+        setProductResult,
+        setLabelInfo,
         setVerifyResult,
         setVerifyError,
         setLasaMatches,

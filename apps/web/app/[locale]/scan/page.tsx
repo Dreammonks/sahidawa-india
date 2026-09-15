@@ -9,6 +9,7 @@ import { VerifiedSafeResult } from "@/components/scanner/results/VerifiedSafeRes
 import { CounterfeitAlertResult } from "@/components/scanner/results/CounterfeitAlertResult";
 import { UnverifiedResult } from "@/components/scanner/results/UnverifiedResult";
 import { ErrorResult } from "@/components/scanner/results/ErrorResult";
+import { ProductLookupResult } from "@/components/scanner/results/ProductLookupResult";
 import { formatExpiryForBadge } from "@/lib/medicineDateUtils";
 import { useMedicineImageUpload } from "@/hooks/useMedicineImageUpload";
 import { Link } from "@/i18n/routing";
@@ -87,6 +88,10 @@ export default function ScanPage() {
         lasaMatches,
         showLasaConfirmation,
         pendingVerifyResult,
+        productResult,
+        labelInfo,
+        setProductResult,
+        setLabelInfo,
         setVerifyResult,
         setVerifyError,
         setPendingVerifyResult,
@@ -117,6 +122,7 @@ export default function ScanPage() {
         setBatchInput,
         setVerifyResult,
         setIsScanning,
+        onLabelInfo: setLabelInfo,
     });
 
     const handleSaveToABHA = async () => {
@@ -268,6 +274,8 @@ export default function ScanPage() {
         setShowResult(false);
         setVerifyResult(null);
         setVerifyError(null);
+        setProductResult(null);
+        setLabelInfo(null);
         setBatchInput("");
         setCameraPermissionDenied(false);
         setIsCameraActive(false);
@@ -278,6 +286,8 @@ export default function ScanPage() {
         setShowResult(false);
         setVerifyResult(null);
         setVerifyError(null);
+        setProductResult(null);
+        setLabelInfo(null);
     };
 
     const handleShare = async () => {
@@ -551,6 +561,16 @@ export default function ScanPage() {
                                             onRetry={() => handleVerify(batchInput)}
                                             onClose={handleDismissResult}
                                             isOffline={isOffline}
+                                        />
+                                    )}
+
+                                    {!verifyError && productResult && (
+                                        <ProductLookupResult
+                                            result={productResult}
+                                            labelInfo={labelInfo ?? undefined}
+                                            onScanAgain={handleScanAgain}
+                                            onShare={handleShare}
+                                            shareLabel={tScan("share.button")}
                                         />
                                     )}
 

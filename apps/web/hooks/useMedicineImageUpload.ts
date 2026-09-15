@@ -14,6 +14,7 @@ import { saveScanHistory } from "@/lib/db/scanHistory";
 import { expiryToIso } from "@/lib/medicineDateUtils";
 import { preprocessMedicineImage } from "@/lib/imageEnhancer";
 import { validateMedicineImage } from "@/lib/imageValidation";
+import { findProductBarcodeInText } from "@/lib/barcode";
 
 type UseMedicineImageUploadProps = {
     handleVerify: (batch: string) => Promise<void>;
@@ -23,7 +24,19 @@ type UseMedicineImageUploadProps = {
     setBatchInput: (batch: string) => void;
     setVerifyResult: (result: VerifyResult | null) => void;
     setIsScanning: (scanning: boolean) => void;
+    onLabelInfo?: (info: { batch?: string; expiry?: string }) => void;
 };
+
+const OCR_TIMEOUT_MS = 120000;
+
+function readFileAsDataUrl(file: Blob): Promise<string> {
+    return new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.onerror = () => reject(new Error("Failed to read image file"));
+        reader.readAsDataURL(file);
+    });
+}
 
 export function useMedicineImageUpload({
     handleVerify,
@@ -33,6 +46,7 @@ export function useMedicineImageUpload({
     setBatchInput,
     setVerifyResult,
     setIsScanning,
+    onLabelInfo,
 }: UseMedicineImageUploadProps) {
     const [uploadedImage, setUploadedImage] = useState<string | null>(null);
     const [ocrText, setOcrText] = useState<string | null>(null);
@@ -62,6 +76,68 @@ export function useMedicineImageUpload({
     };
 
     const COMPRESSION_THRESHOLD = 2 * 1024 * 1024;
+
+    const runOcr = async (dataUrl: string) => {
+        if (!ocrWorkerRef.current) {
+            const initPromise = Tesseract.createWorker("eng");
+
+            const initTimeout = new Promise<never>((_, reject) =>
+                setTimeout(() => reject(new Error("OCR initialization timed out")), OCR_TIMEOUT_MS)
+            );
+
+            try {
+                const worker = await Promise.race([initPromise, initTimeout]);
+
+                await worker.setParameters({
+                    tessedit_pageseg_mode: Tesseract.PSM.SPARSE_TEXT,
+                });
+
+                ocrWorkerRef.current = worker;
+            } catch (err) {
+                throw new Error(
+                    err instanceof Error && err.message === "OCR initialization timed out"
+                        ? "OCR timed out"
+                        : "OCR Initialization failed"
+                );
+            }
+        }
+
+        let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+        const recognizeTimeout = new Promise<never>((_, reject) => {
+            timeoutId = setTimeout(() => reject(new Error("OCR timed out")), OCR_TIMEOUT_MS);
+        });
+
+        try {
+            return await Promise.race([ocrWorkerRef.current.recognize(dataUrl), recognizeTimeout]);
+        } finally {
+            if (timeoutId) {
+                clearTimeout(timeoutId);
+            }
+        }
+    };
+
+    // Best effort: a barcode identifies the product, but batch and expiry are only
+    // printed as text, so read them from the same photo after the lookup is shown.
+    const readLabelDetails = async (dataUrl: string, signal: AbortSignal) => {
+        if (!onLabelInfo) return;
+        try {
+            const { data } = await runOcr(dataUrl);
+            if (!isMountedRef.current || signal.aborted) return;
+            const batch = extractBatchNumber(data.text) ?? undefined;
+            const expiry = extractExpiryDate(data.text) ?? undefined;
+            if (batch || expiry) onLabelInfo({ batch, expiry });
+        } catch (error) {
+            structuredLog({
+                log_level: "warn",
+                route: "/scan",
+                meta: {
+                    message: "[scan] Label OCR after barcode decode failed",
+                    error: error instanceof Error ? error.message : String(error),
+                },
+            });
+        }
+    };
 
     const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
@@ -106,15 +182,10 @@ export function useMedicineImageUpload({
             console.warn("Image enhancement failed, falling back to original", error);
         }
 
-        const reader = new FileReader();
         let dataUrl: string;
 
         try {
-            dataUrl = await new Promise<string>((resolve, reject) => {
-                reader.onloadend = () => resolve(reader.result as string);
-                reader.onerror = () => reject(new Error("Failed to read image file"));
-                reader.readAsDataURL(processedFile);
-            });
+            dataUrl = await readFileAsDataUrl(processedFile);
         } catch {
             toast.error("Could not read the image file. Please try again.");
             e.target.value = "";
@@ -164,9 +235,14 @@ export function useMedicineImageUpload({
                 hints.set(DecodeHintType.TRY_HARDER, true);
 
                 const reader = new BrowserMultiFormatReader(hints);
-                const zxingResult = await reader.decodeFromImageUrl(dataUrl);
+                // Contrast enhancement can smear thin bars, so retry on the original photo.
+                const zxingResult = await reader
+                    .decodeFromImageUrl(dataUrl)
+                    .catch(async (firstError) => {
+                        if (processedFile === file) throw firstError;
+                        return reader.decodeFromImageUrl(await readFileAsDataUrl(file));
+                    });
                 const barcodeText = zxingResult.getText().trim();
-
                 if (barcodeText) {
                     barcodeFound = true;
 
@@ -177,6 +253,7 @@ export function useMedicineImageUpload({
                     toast.success(`Barcode detected: ${barcodeText} — verifying…`);
 
                     await handleVerify(barcodeText);
+                    void readLabelDetails(dataUrl, controller.signal);
                     return;
                 }
             } catch (error) {
@@ -196,53 +273,7 @@ export function useMedicineImageUpload({
             // ── Step 2: Tesseract.js OCR Fallback ────────────────────────────
             setOcrStatus("extracting-text");
 
-            if (!ocrWorkerRef.current) {
-                const initPromise = Tesseract.createWorker("eng");
-
-                const timeoutPromise = new Promise<never>((_, reject) =>
-                    setTimeout(() => reject(new Error("OCR initialization timed out")), 120000)
-                );
-
-                try {
-                    const worker = await Promise.race([initPromise, timeoutPromise]);
-
-                    await worker.setParameters({
-                        tessedit_pageseg_mode: Tesseract.PSM.SPARSE_TEXT,
-                    });
-
-                    ocrWorkerRef.current = worker;
-                } catch (err) {
-                    throw new Error(
-                        err instanceof Error && err.message === "OCR initialization timed out"
-                            ? "OCR timed out"
-                            : "OCR Initialization failed"
-                    );
-                }
-            }
-
-            if (!isMountedRef.current || controller.signal.aborted || ocrCancelledRef.current) {
-                return;
-            }
-
-            let timeoutId: ReturnType<typeof setTimeout> | undefined;
-
-            const timeoutPromise = new Promise<never>((_, reject) => {
-                timeoutId = setTimeout(() => reject(new Error("OCR timed out")), 120000);
-            });
-
-            const ocrPromise = ocrWorkerRef.current.recognize(dataUrl);
-
-            let raceResult;
-
-            try {
-                raceResult = await Promise.race([ocrPromise, timeoutPromise]);
-            } finally {
-                if (timeoutId) {
-                    clearTimeout(timeoutId);
-                }
-            }
-
-            const { data } = raceResult;
+            const { data } = await runOcr(dataUrl);
 
             if (!isMountedRef.current || controller.signal.aborted || ocrCancelledRef.current) {
                 return;
@@ -250,7 +281,6 @@ export function useMedicineImageUpload({
 
             const rawText = data.text;
             const confidence = data.confidence / 100;
-
             if (!rawText || !rawText.trim()) {
                 toast.warning(
                     "No text found in image. Please photograph the printed text side of the medicine."
@@ -271,6 +301,21 @@ export function useMedicineImageUpload({
             // Parse OCR Text using utility regex
             const parsedBatchNum = extractBatchNumber(rawText);
             const parsedExpiryStr = extractExpiryDate(rawText);
+
+            // The bars could not be decoded, but the digits printed under them may have been read.
+            const printedBarcode = findProductBarcodeInText(rawText);
+            if (printedBarcode) {
+                setBatchInput(printedBarcode);
+                toast.success(`Barcode number read from label: ${printedBarcode} — looking up…`);
+                await handleVerify(printedBarcode);
+                if (parsedBatchNum || parsedExpiryStr) {
+                    onLabelInfo?.({
+                        batch: parsedBatchNum ?? undefined,
+                        expiry: parsedExpiryStr ?? undefined,
+                    });
+                }
+                return;
+            }
             const medName = extractMedicineName(rawText);
 
             if (parsedBatchNum) setParsedBatch(parsedBatchNum);
@@ -402,7 +447,6 @@ export function useMedicineImageUpload({
             }
 
             const errorMsg = err instanceof Error ? err.message : String(err);
-
             if (errorMsg === "OCR timed out" || errorMsg === "OCR initialization timed out") {
                 toast.error(
                     "OCR timed out. Please check your internet connection or try a clearer image."
