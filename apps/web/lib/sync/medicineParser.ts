@@ -1,4 +1,25 @@
+// Packs often print manufacturing and expiry side by side with no label
+// (e.g. "04/2025-03/2028" or "FEB.2026 JUL.2027"); expiry is always the later one.
+function latestMonthYear(candidates: Array<{ month: string; year: string }>): string | null {
+    if (candidates.length === 0) return null;
+    const latest = candidates.reduce((best, c) =>
+        Number(c.year) * 12 + Number(c.month) > Number(best.year) * 12 + Number(best.month)
+            ? c
+            : best
+    );
+    return `${latest.month}/${latest.year}`;
+}
+
 export function extractExpiryDate(text: string): string | null {
+    // 0. Mfg-Exp range: MM/YYYY-MM/YYYY
+    const range = text.match(/\b(0[1-9]|1[0-2])\/(20\d{2})\s*[-–]\s*(0[1-9]|1[0-2])\/(20\d{2})\b/);
+    if (range) {
+        return latestMonthYear([
+            { month: range[1], year: range[2] },
+            { month: range[3], year: range[4] },
+        ]);
+    }
+
     // 1. Most specific: DD/MM/YYYY
     const ddMmYyyy = /\b(\d{2})[\/\-](\d{2})[\/\-](\d{4})\b/;
     const dmy = text.match(ddMmYyyy);
@@ -21,9 +42,9 @@ export function extractExpiryDate(text: string): string | null {
 
     // 2. Named months: JAN 2024
     const mmm =
-        /(?:EXP(?:IRY)?\s*)?(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\s*\.?\s*(\d{4})/i;
-    const mm = text.match(mmm);
-    if (mm) {
+        /(?:EXP(?:IRY)?\s*)?(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\s*[.:]?\s*(\d{4})/gi;
+    const namedMatches = Array.from(text.matchAll(mmm));
+    if (namedMatches.length > 0) {
         const map: Record<string, string> = {
             jan: "01",
             feb: "02",
@@ -38,8 +59,10 @@ export function extractExpiryDate(text: string): string | null {
             nov: "11",
             dec: "12",
         };
-        const month = map[mm[1].toLowerCase()];
-        if (month) return `${month}/${mm[2]}`;
+        const named = latestMonthYear(
+            namedMatches.map((mm) => ({ month: map[mm[1].toLowerCase()], year: mm[2] }))
+        );
+        if (named) return named;
     }
 
     // 3. Labeled MM/YYYY or MM/YY
@@ -58,14 +81,13 @@ export function extractExpiryDate(text: string): string | null {
     }
 
     // 4. Generic MM/YYYY or MM/YY
-    const generic = /\b(0[1-9]|1[0-2])[\/\s.-](20[2-9]\d|[2-9]\d)\b/;
-    const g = text.match(generic);
-    if (g) {
-        const year = g[2].length === 2 ? "20" + g[2] : g[2];
-        return `${g[1]}/${year}`;
-    }
-
-    return null;
+    const generic = /\b(0[1-9]|1[0-2])[\/\s.-](20[2-9]\d|[2-9]\d)\b/g;
+    return latestMonthYear(
+        Array.from(text.matchAll(generic)).map((g) => ({
+            month: g[1],
+            year: g[2].length === 2 ? "20" + g[2] : g[2],
+        }))
+    );
 }
 
 export function extractBatchNumber(text: string): string | null {
