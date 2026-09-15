@@ -4,12 +4,13 @@
  */
 
 function hasValidGs1CheckDigit(code: string): boolean {
-    const digits = code.split("").map(Number);
-    const checkDigit = digits.pop() as number;
-    const sum = digits
-        .reverse()
-        .reduce((total, digit, index) => total + digit * (index % 2 === 0 ? 3 : 1), 0);
-    return (10 - (sum % 10)) % 10 === checkDigit;
+    let sum = 0;
+    let weight = 3;
+    for (let i = code.length - 2; i >= 0; i--) {
+        sum += Number(code[i]) * weight;
+        weight = weight === 3 ? 1 : 3;
+    }
+    return (10 - (sum % 10)) % 10 === Number(code[code.length - 1]);
 }
 
 export function isProductBarcode(text: string): boolean {

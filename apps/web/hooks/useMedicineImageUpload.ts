@@ -243,6 +243,7 @@ export function useMedicineImageUpload({
                         return reader.decodeFromImageUrl(await readFileAsDataUrl(file));
                     });
                 const barcodeText = zxingResult.getText().trim();
+
                 if (barcodeText) {
                     barcodeFound = true;
 
@@ -281,6 +282,7 @@ export function useMedicineImageUpload({
 
             const rawText = data.text;
             const confidence = data.confidence / 100;
+
             if (!rawText || !rawText.trim()) {
                 toast.warning(
                     "No text found in image. Please photograph the printed text side of the medicine."
@@ -316,6 +318,7 @@ export function useMedicineImageUpload({
                 }
                 return;
             }
+
             const medName = extractMedicineName(rawText);
 
             if (parsedBatchNum) setParsedBatch(parsedBatchNum);
@@ -447,6 +450,7 @@ export function useMedicineImageUpload({
             }
 
             const errorMsg = err instanceof Error ? err.message : String(err);
+
             if (errorMsg === "OCR timed out" || errorMsg === "OCR initialization timed out") {
                 toast.error(
                     "OCR timed out. Please check your internet connection or try a clearer image."

@@ -44,15 +44,13 @@ function describeVerification(
 ): VerificationApplicability {
     if (medicine) {
         const verified = computeVerifiedStatus(medicine);
-        return {
-            applicable: true,
-            verified,
-            note: verified
-                ? "Matched against the CDSCO brand registry with no counterfeit alert."
-                : medicine.is_counterfeit_alert
-                  ? "This medicine carries a counterfeit or recall alert."
-                  : "Not yet matched against the CDSCO brand registry.",
-        };
+        let note = "Not yet matched against the CDSCO brand registry.";
+        if (verified) {
+            note = "Matched against the CDSCO brand registry with no counterfeit alert.";
+        } else if (medicine.is_counterfeit_alert) {
+            note = "This medicine carries a counterfeit or recall alert.";
+        }
+        return { applicable: true, verified, note };
     }
 
     switch (product.category) {

@@ -2,11 +2,13 @@
 // (e.g. "04/2025-03/2028" or "FEB.2026 JUL.2027"); expiry is always the later one.
 function latestMonthYear(candidates: Array<{ month: string; year: string }>): string | null {
     if (candidates.length === 0) return null;
-    const latest = candidates.reduce((best, c) =>
-        Number(c.year) * 12 + Number(c.month) > Number(best.year) * 12 + Number(best.month)
-            ? c
-            : best
-    );
+    let latest = candidates[0];
+    for (const candidate of candidates) {
+        const isLater =
+            Number(candidate.year) * 12 + Number(candidate.month) >
+            Number(latest.year) * 12 + Number(latest.month);
+        if (isLater) latest = candidate;
+    }
     return `${latest.month}/${latest.year}`;
 }
 
