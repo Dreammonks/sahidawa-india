@@ -24,8 +24,8 @@ from urllib.parse import urljoin
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-# Chromium's system libraries were extracted without sudo into ~/.local/pw-libs
-# on this WSL machine; Playwright's browser inherits this variable.
+# Without sudo, Chromium's missing system libraries can be extracted into
+# ~/.local/pw-libs (apt-get download + dpkg -x); Playwright's browser inherits this variable.
 _PW_LIBS = Path.home() / ".local/pw-libs/root/usr/lib/x86_64-linux-gnu"
 if _PW_LIBS.exists():
     os.environ["LD_LIBRARY_PATH"] = f"{_PW_LIBS}:{_PW_LIBS / 'nss'}:{os.environ.get('LD_LIBRARY_PATH', '')}"
@@ -237,10 +237,12 @@ def main() -> None:
             verified = f"{int(medicines['is_cdsco_verified'].sum())}/{len(medicines)} matched the CDSCO sample"
         return {"cdsco_validation": verified, **load(loader, medicines, "medicines")}
 
+    def stores_and_load():
+        summary, stores = jan_aushadhi_stores(args.limit)
+        return {**summary, **load(loader, stores, "pharmacies")}
+
     run_step("4. Validate + load medicines", validate_and_load, results)
-    run_step("5. Jan Aushadhi stores (token + API)",
-             lambda: (lambda s_df: {**s_df[0], **load(loader, s_df[1], "pharmacies")})(jan_aushadhi_stores(args.limit)),
-             results)
+    run_step("5. Jan Aushadhi stores (token + API)", stores_and_load, results)
     run_step("6. CDSCO recall alert PDF (download + text)", cdsco_alert_pdf, results)
 
     after = table_counts(loader.client)
