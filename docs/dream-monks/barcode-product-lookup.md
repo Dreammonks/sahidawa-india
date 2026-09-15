@@ -190,11 +190,3 @@ The API can also be called directly, e.g. http://localhost:4000/api/v1/products/
 | Database | `supabase/migrations/20260914000000_create_product_barcodes.sql` (tables `product_barcodes`, `unknown_barcode_scans`, function `record_unknown_barcode`); demo data in `supabase/demo/product_barcodes_from_photos.sql` |
 | API | `routes/products.ts`, `services/productLookup.service.ts`, `repositories/productBarcode.repository.ts`, `utils/gtin.ts` |
 | Website | `lib/barcode.ts`, `lib/api/products.ts`, `hooks/useMedicineVerification.ts`, `hooks/useMedicineImageUpload.ts`, `components/scanner/results/ProductLookupResult.tsx` |
-
----
-
-## Questions to decide
-
-- [ ] Is the wording right for products that aren't medicines, and for unknown barcodes?
-- [ ] Should this feature be offered to the original SahiDawa project?
-- [ ] Where could real barcode data come from: GS1 India (the official barcode body), pharmacy suppliers, or manufacturers?

@@ -179,13 +179,3 @@ all 5 sources in a single table.
 | Nightly schedule | `.github/workflows/etl-cron.yml` |
 
 The project's own technical guide is `docs/etl-pipeline.md`.
-
----
-
-## Questions to decide
-
-- [ ] Should the registry collector download the list **once** instead of page by page (problem 2)?
-- [ ] Should shops be de-duplicated using their unique Kendra code (problem 4)?
-- [ ] Can we get a Gemini or Groq key, so recall notices can be read?
-- [ ] Is it acceptable to call the Jan Aushadhi shop service automatically every week?
-- [ ] Is a small sample enough proof, or should one source be collected in full?
