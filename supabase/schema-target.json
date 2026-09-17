@@ -11,6 +11,12 @@
         "manufacturing_date",
         "expiry_date",
         "composition",
+        "strength",
+        "dosage_form",
+        "pack_size",
+        "source_product_code",
+        "schedule",
+        "source",
         "cdsco_approval_status",
         "is_counterfeit_alert",
         "is_cdsco_verified",
@@ -24,110 +30,38 @@
         "created_at",
         "updated_at"
       ],
-      "rls": false,
+      "rls": true,
       "policies": []
     },
     "pharmacies": {
       "columns": [
         "id",
         "name",
+        "license_id",
         "address",
         "district",
-        "state",
-        "phone_number",
-        "is_verified",
-        "location",
-        "created_at",
-        "is_active",
-        "deleted_at"
-      ],
-      "rls": false,
-      "policies": []
-    },
-    "counterfeit_reports": {
-      "columns": [
-        "id",
-        "medicine_id",
-        "scanned_barcode",
-        "reported_brand_name",
-        "photo_url",
-        "report_location",
-        "district",
-        "status",
-        "created_at",
-        "reporter_id",
-        "manufacturer",
-        "description",
-        "pharmacy_name",
-        "address",
-        "city",
         "state",
         "pincode",
-        "photo_urls"
+        "store_code",
+        "phone_number",
+        "is_active",
+        "location",
+        "created_at"
       ],
-      "rls": false,
+      "rls": true,
       "policies": []
     },
-    "drug_alerts": {
+    "cdsco_reference": {
       "columns": [
         "id",
-        "medicine_id",
-        "reported_brand_name",
-        "manufacturer",
-        "batch_number",
-        "alert_type",
-        "risk_level",
-        "district",
-        "state",
-        "source_url",
-        "reported_at",
-        "created_at"
-      ],
-      "rls": true,
-      "policies": [
-        "drug_alerts_public_read",
-        "drug_alerts_service_write"
-      ]
-    },
-    "audit_logs": {
-      "columns": [
-        "id",
-        "admin_id",
-        "action",
-        "target_type",
-        "target_id",
-        "details",
-        "created_at"
-      ],
-      "rls": true,
-      "policies": [
-        "audit_logs_service_only"
-      ]
-    },
-    "district_alerts": {
-      "columns": [
-        "id",
-        "district",
-        "state",
-        "alert_level",
-        "medicine_name",
-        "is_active",
-        "created_at"
-      ],
-      "rls": true,
-      "policies": [
-        "district_alerts_service_only"
-      ]
-    },
-    "push_subscriptions": {
-      "columns": [
-        "id",
-        "endpoint",
-        "subscription",
+        "brand_name",
+        "firm_name",
+        "brand_name_normalized",
+        "firm_name_normalized",
         "created_at",
         "updated_at"
       ],
-      "rls": false,
+      "rls": true,
       "policies": []
     },
     "etl_failed_rows": {
@@ -148,7 +82,38 @@
         "updated_at",
         "last_attempt_at"
       ],
-      "rls": false,
+      "rls": true,
+      "policies": []
+    },
+    "product_barcodes": {
+      "columns": [
+        "gtin",
+        "product_name",
+        "brand",
+        "manufacturer",
+        "marketed_by",
+        "category",
+        "regulator",
+        "is_medicine",
+        "pack_size",
+        "mrp",
+        "medicine_id",
+        "data_source",
+        "source_note",
+        "created_at",
+        "updated_at"
+      ],
+      "rls": true,
+      "policies": []
+    },
+    "unknown_barcode_scans": {
+      "columns": [
+        "gtin",
+        "scan_count",
+        "first_seen_at",
+        "last_seen_at"
+      ],
+      "rls": true,
       "policies": []
     }
   }

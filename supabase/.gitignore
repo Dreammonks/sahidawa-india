@@ -6,3 +6,6 @@
 .env.keys
 .env.local
 .env.*.local
+
+# Supabase Studio saves ad-hoc queries here
+snippets
