@@ -54,12 +54,12 @@ cd apps/etl
 python -m venv .venv
 .venv/bin/pip install -e ".[dev]" -r requirements.txt
 .venv/bin/playwright install chromium
-.venv/bin/python demo_small_scrape.py --limit 20   # a small slice of every source
+.venv/bin/python demo_small_scrape.py --ja-rows 20 --commercial-rows 20 --cdsco-rows 300   # a small slice
 ```
 
-The full runs are `run_all.py` (medicines), `run_alerts.py` (drug alerts) and `run_stores.py` (shops).
+The full runs are `run_all.py` (medicines) and `run_alerts.py` (drug alerts).
 
-### Barcode API
+### API
 
 ```bash
 npm install
@@ -68,7 +68,9 @@ curl http://localhost:4100/api/v1/products/barcode/8901234567890
 ```
 
 Once Supabase is running and `apps/etl/.venv` exists, `scripts/demo.sh` does the
-rest in one go: empty database, scraped data, barcode answers.
+rest in one go: empty database, scraped data, API answers. It loads the full Jan
+Aushadhi list, 5,000 commercial medicines, the full CDSCO registry and every
+month of drug alerts; the sizes are settings at the top of the script.
 
 ---
 
@@ -78,7 +80,7 @@ rest in one go: empty database, scraped data, barcode answers.
 # Pipeline
 cd apps/etl && .venv/bin/python -m pytest tests -q
 
-# Barcode API
+# API
 npm test
 npx tsc --noEmit -p apps/barcode-api
 npm run lint:circular
@@ -104,7 +106,7 @@ Prettier and scans for import cycles when TypeScript changed; `pre-push` runs
 ### Adding a data source
 
 A new scraper goes in `apps/etl/src/scrapers/`, is wired into `run_all.py` or
-`run_stores.py`, and loads through `SupabaseLoader` so failed rows land in
+`run_alerts.py`, and loads through `SupabaseLoader` so failed rows land in
 `etl_failed_rows`. Running it twice must not duplicate rows. Add tests that stub
 the network; no test may call a live site.
 

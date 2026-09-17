@@ -25,5 +25,5 @@ jest.mock("../src/middleware/rateLimit", () => ({
         resetAll: jest.fn().mockResolvedValue(undefined),
     })),
     barcodeLimiter: jest.fn((_req: unknown, _res: unknown, next: () => void) => next()),
-    alertsLimiter: jest.fn((_req: unknown, _res: unknown, next: () => void) => next()),
+    dataLimiter: jest.fn((_req: unknown, _res: unknown, next: () => void) => next()),
 }));

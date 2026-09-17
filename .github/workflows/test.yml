@@ -31,7 +31,7 @@ jobs:
               run: python -m pytest tests -q
 
     barcode-api:
-        name: Barcode API (jest)
+        name: API (jest)
         runs-on: ubuntu-latest
         timeout-minutes: 15
         steps:

@@ -9,7 +9,7 @@ through the API; nothing reads the database directly.
 
 ```
 Government and public websites
-         │  daily (medicines, drug alerts) · weekly (shops)
+         │  daily (medicines, drug alerts)
          ▼
    scraping pipeline  ──►  database  ──►  API  ──►  Aushadhi IO apps
      (apps/etl)                   (apps/barcode-api)    and other services
@@ -19,8 +19,8 @@ Government and public websites
 
 | Path | What it does |
 |---|---|
-| `apps/etl` | Five scrapers — Jan Aushadhi prices, a commercial medicine dataset, the CDSCO brand registry, CDSCO drug alerts, Jan Aushadhi shop locations — plus cleaning, CDSCO matching and loading |
-| `apps/barcode-api` | `GET /api/v1/products/barcode/:gtin` and `GET /api/v1/drug-alerts`. See its own README |
+| `apps/etl` | Four scrapers — Jan Aushadhi prices, a commercial medicine dataset, the CDSCO brand registry, CDSCO drug alerts — plus cleaning, CDSCO matching and loading |
+| `apps/barcode-api` | The API: medicines, drug alerts, the CDSCO brand registry and barcode lookup. See its own README |
 | `supabase/` | The complete schema, in a single migration |
 | `.github/workflows/` | The nightly and weekly scrape, tests, CodeQL |
 
@@ -38,15 +38,16 @@ Then load some real data:
 ```bash
 cd apps/etl
 python -m venv .venv && .venv/bin/pip install -e ".[dev]" -r requirements.txt
-SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=... .venv/bin/python demo_small_scrape.py --limit 20
+SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=... .venv/bin/python demo_small_scrape.py --ja-rows 20 --commercial-rows 20 --cdsco-rows 300
 ```
 
-`demo_small_scrape.py` takes a deliberately tiny slice from every source and
-prints a before-and-after row count, so you can see data arrive. The full runs
-are `run_all.py` for medicines, `run_alerts.py` for drug alerts (`--all` loads
-every month since 2019) and `run_stores.py` for shops.
+`demo_small_scrape.py` loads a slice of every medicine source (the sizes are
+options; 0 means everything) and prints a before-and-after row count, so you
+can see data arrive. The full runs
+are `run_all.py` for medicines and `run_alerts.py` for drug alerts (`--all` loads
+every month since 2019).
 
-The barcode API:
+The API:
 
 ```bash
 npm install
@@ -59,15 +60,17 @@ npm test
 **Other services use the API, never the database.** Only this project's own
 server holds the database key. Row level security is on for every table and
 the public `anon` key is refused, because it ships inside apps and anyone can
-extract it. `pharmacies` also holds contact names and phone numbers.
+extract it.
 
 When a service needs data the API does not serve yet, add an endpoint to
 `apps/barcode-api` rather than opening the database.
 
-Tables: `medicines`, `drug_alerts`, `pharmacies`, `cdsco_reference`,
-`product_barcodes`, `unknown_barcode_scans`, `etl_failed_rows`. The database
-also has a medicine name search, `search_medicines_text('dolo', 5)`, which no
-endpoint serves yet.
+| Data | Endpoint |
+|---|---|
+| Medicines — search by name, details, Jan Aushadhi price | `GET /api/v1/medicines`, `GET /api/v1/medicines/:id` |
+| CDSCO drug alerts | `GET /api/v1/drug-alerts` |
+| CDSCO brand registry | `GET /api/v1/cdsco-brands` |
+| Product by barcode | `GET /api/v1/products/barcode/:gtin` |
 
 ## Two things that will surprise you
 
@@ -89,7 +92,7 @@ and a registry name is recorded only when it actually matched.
 
 This was a full product — website, API server, an AI service, recall alerts,
 notifications. All of that moved to Aushadhi IO, and what remains is the data
-and the one endpoint that serves it. `docs/project-history.md` and `docs/adr/`
+and the API that serves it. `docs/project-history.md` and `docs/adr/`
 keep the record; `supabase/legacy-schema-from-api.sql` is the old schema the
 single migration was rebuilt from.
 

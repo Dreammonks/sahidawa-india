@@ -18,7 +18,7 @@ body:
       description: Select the area where you found the bug.
       options:
         - "Scraping pipeline (apps/etl)"
-        - "Barcode API (apps/barcode-api)"
+        - "API (apps/barcode-api)"
         - "Database schema (supabase/)"
         - "Other / Unknown"
     validations:

@@ -60,10 +60,6 @@ CONFLICT_COLUMNS = {
         # product code every strength of one generic would share a key.
         "source_product_code",
     ),
-    "pharmacies": (
-        "name",
-        "address",
-    ),
     "drug_alerts": (
         "alert_type",
         "product_name",
@@ -102,17 +98,6 @@ ALLOWED_COLUMNS = {
         "source",
         "created_at",
         "updated_at",
-    },
-    "pharmacies": {
-        "name",
-        "address",
-        "district",
-        "state",
-        "pincode",
-        "store_code",
-        "phone_number",
-        "is_active",
-        "location",
     },
     "drug_alerts": {
         "alert_type",

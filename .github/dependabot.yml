@@ -1,6 +1,6 @@
 version: 2
 updates:
-    # Barcode API and the workspace root
+    # The API and the workspace root
     - package-ecosystem: "npm"
       directory: "/"
       schedule:

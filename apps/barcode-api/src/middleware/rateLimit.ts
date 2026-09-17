@@ -92,18 +92,19 @@ export const barcodeLimiter = rateLimit({
     },
 });
 
-// Its own budget, so a service paging through alerts cannot use up barcode lookups.
-export const alertsLimiter = rateLimit({
+// Shared by the read-only data endpoints (medicines, drug alerts, CDSCO registry),
+// with its own budget so a service paging through data cannot use up barcode lookups.
+export const dataLimiter = rateLimit({
     skip: () => process.env.NODE_ENV === "test",
     windowMs: WINDOW_MS,
-    max: Number(process.env.ALERTS_RATE_LIMIT ?? DEFAULT_MAX),
+    max: Number(process.env.DATA_RATE_LIMIT ?? DEFAULT_MAX),
     standardHeaders: true,
     legacyHeaders: false,
     validate: false,
-    store: buildStore("alerts"),
+    store: buildStore("data"),
     handler: (_req, res) => {
         res.status(429).json({
-            error: "Too many drug alert requests. Please try again later.",
+            error: "Too many requests. Please try again later.",
         });
     },
 });

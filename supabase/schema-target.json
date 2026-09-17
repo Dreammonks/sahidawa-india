@@ -33,24 +33,6 @@
       "rls": true,
       "policies": []
     },
-    "pharmacies": {
-      "columns": [
-        "id",
-        "name",
-        "license_id",
-        "address",
-        "district",
-        "state",
-        "pincode",
-        "store_code",
-        "phone_number",
-        "is_active",
-        "location",
-        "created_at"
-      ],
-      "rls": true,
-      "policies": []
-    },
     "cdsco_reference": {
       "columns": [
         "id",

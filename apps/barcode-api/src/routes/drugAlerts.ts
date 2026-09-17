@@ -1,68 +1,43 @@
 import { Router, Request, Response } from "express";
-import { alertsLimiter } from "../middleware/rateLimit";
+import { dataLimiter } from "../middleware/rateLimit";
 import {
     drugAlertRepository,
     DrugAlertQuery,
     DrugAlertType,
 } from "../repositories/drugAlert.repository";
 import logger from "../utils/logger";
+import { invalid, Parsed, Query, readPage, readText, SEARCH_FORMAT } from "../utils/queryParams";
 
 const router = Router();
 
-const DEFAULT_LIMIT = 20;
-const MAX_LIMIT = 100;
-const MAX_OFFSET = 10_000;
 const ALERT_TYPES: DrugAlertType[] = ["nsq", "spurious"];
 const MONTH_FORMAT = /^\d{4}-(0[1-9]|1[0-2])$/;
-// % is allowed because product names contain it ("Cream 0.1%"); the repository matches it literally.
-const SEARCH_FORMAT = /^[\p{L}\p{N} .,&+\-/()'%]{2,100}$/u;
 const BATCH_FORMAT = /^[A-Za-z0-9\-/.]{1,50}$/;
 
-type Parsed = { ok: true; query: DrugAlertQuery } | { ok: false; error: string };
+function parseQuery(raw: Query): Parsed<DrugAlertQuery> {
+    const page = readPage(raw);
+    if (!page.ok) return page;
+    const query: DrugAlertQuery = { ...page.value };
 
-function readInteger(raw: unknown, fallback: number, min: number, max: number): number | null {
-    if (raw === undefined) return fallback;
-    const value = Number(raw);
-    return Number.isInteger(value) && value >= min && value <= max ? value : null;
-}
+    const search = readText(raw.search, SEARCH_FORMAT);
+    if (search === null) return invalid("search must be 2 to 100 letters, numbers or spaces.");
+    if (search !== undefined) query.search = search;
 
-function parseQuery(raw: Request["query"]): Parsed {
-    const limit = readInteger(raw.limit, DEFAULT_LIMIT, 1, MAX_LIMIT);
-    if (limit === null)
-        return { ok: false, error: `limit must be a whole number from 1 to ${MAX_LIMIT}.` };
+    const batch = readText(raw.batch, BATCH_FORMAT);
+    if (batch === null) return invalid("batch must be up to 50 letters, numbers, - / or .");
+    if (batch !== undefined) query.batch = batch;
 
-    const offset = readInteger(raw.offset, 0, 0, MAX_OFFSET);
-    if (offset === null)
-        return { ok: false, error: `offset must be a whole number from 0 to ${MAX_OFFSET}.` };
-
-    const query: DrugAlertQuery = { limit, offset };
-
-    if (raw.search !== undefined) {
-        const search = String(raw.search).trim();
-        if (!SEARCH_FORMAT.test(search)) {
-            return { ok: false, error: "search must be 2 to 100 letters, numbers or spaces." };
-        }
-        query.search = search;
-    }
-    if (raw.batch !== undefined) {
-        const batch = String(raw.batch).trim();
-        if (!BATCH_FORMAT.test(batch)) {
-            return { ok: false, error: "batch must be up to 50 letters, numbers, - / or ." };
-        }
-        query.batch = batch;
-    }
     if (raw.type !== undefined) {
         const type = String(raw.type) as DrugAlertType;
-        if (!ALERT_TYPES.includes(type))
-            return { ok: false, error: "type must be nsq or spurious." };
+        if (!ALERT_TYPES.includes(type)) return invalid("type must be nsq or spurious.");
         query.type = type;
     }
-    if (raw.month !== undefined) {
-        const month = String(raw.month);
-        if (!MONTH_FORMAT.test(month)) return { ok: false, error: "month must look like 2026-07." };
-        query.month = month;
-    }
-    return { ok: true, query };
+
+    const month = readText(raw.month, MONTH_FORMAT);
+    if (month === null) return invalid("month must look like 2026-07.");
+    if (month !== undefined) query.month = month;
+
+    return { ok: true, value: query };
 }
 
 /**
@@ -82,7 +57,7 @@ function parseQuery(raw: Request["query"]): Parsed {
  *       400: { description: A query parameter is invalid }
  *       500: { description: Lookup failed }
  */
-router.get("/", alertsLimiter, async (req: Request, res: Response) => {
+router.get("/", dataLimiter, async (req: Request, res: Response) => {
     const parsed = parseQuery(req.query);
     if (!parsed.ok) {
         res.status(400).json({ status: "invalid", error: parsed.error });
@@ -90,12 +65,12 @@ router.get("/", alertsLimiter, async (req: Request, res: Response) => {
     }
 
     try {
-        const { total, alerts } = await drugAlertRepository.search(parsed.query);
+        const { total, alerts } = await drugAlertRepository.search(parsed.value);
         res.json({
             status: "ok",
             total,
-            limit: parsed.query.limit,
-            offset: parsed.query.offset,
+            limit: parsed.value.limit,
+            offset: parsed.value.offset,
             alerts,
         });
     } catch (err) {

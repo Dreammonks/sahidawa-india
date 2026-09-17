@@ -17,7 +17,7 @@ body:
       label: Which area does this feature belong to?
       options:
         - "Scraping pipeline (apps/etl)"
-        - "Barcode API (apps/barcode-api)"
+        - "API (apps/barcode-api)"
         - "Database schema (supabase/)"
         - "CI / workflows"
         - "Other"

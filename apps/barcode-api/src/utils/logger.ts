@@ -4,7 +4,7 @@ import winston from "winston";
  * Console-only structured logger.
  *
  * The API server's logger also wrote daily-rotated files and stamped each line
- * with a per-request id. Neither survives here: this service runs one endpoint,
+ * with a per-request id. Neither survives here: this service is a small read-only API,
  * and log collection belongs to whatever runs the container.
  */
 const logger = winston.createLogger({

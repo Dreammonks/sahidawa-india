@@ -1,11 +1,49 @@
 # SahiDawa API
 
-Serves SahiDawa's data over HTTP: product lookup by barcode, and CDSCO drug
-alerts.
+Serves SahiDawa's data over HTTP: medicines, CDSCO drug alerts, the CDSCO
+brand registry, and product lookup by barcode. Every endpoint is read-only
+`GET`; list endpoints page with `limit` (1 to 100, default 20) and `offset`.
 
 It exists so that no app or service ever holds a Supabase key. Every table has
 row level security enabled and grants nothing to `anon`, so reads need the
 service role, which stays on this server.
+
+## Medicines
+
+```
+GET /api/v1/medicines
+GET /api/v1/medicines/:id
+```
+
+Medicines from Jan Aushadhi's price list and a commercial medicine dataset.
+
+| Query | Example | Meaning |
+|---|---|---|
+| `search` | `paracetmol` | Brand, generic name or ingredient. Small typos are tolerated; best match first, with a `match_score` from 0 to 1 |
+| `source` | `janaushadhi` or `commercial` | One source only |
+
+Without `search`, medicines are listed alphabetically by generic name.
+
+Each medicine has: `brand_name`, `generic_name`, `manufacturer`, `composition`,
+`strength`, `dosage_form`, `pack_size`, `mrp`, `source`, `source_product_code`
+(Jan Aushadhi's Drug Code), `jan_aushadhi_price` (for a commercial medicine,
+the price of the same generic at the same strength on Jan Aushadhi's list),
+and the CDSCO check result `is_cdsco_verified` with `cdsco_match_score`. An
+empty field means the source does not give it.
+
+`GET /api/v1/medicines/:id` returns one medicine, or 404.
+
+## CDSCO brand registry
+
+```
+GET /api/v1/cdsco-brands?brand=dolo 650&manufacturer=micro labs
+```
+
+The closest entries in CDSCO's brand registry, best first, up to `limit` (1 to
+20, default 5). Each has `product_score`, `manufacturer_score` and
+`match_score` (0 to 100), and `is_match`, which uses the same threshold (90) as
+the pipeline. With a manufacturer, `is_match` uses `match_score`; without one,
+it uses `product_score`, and `matched_on` says which.
 
 ## Barcode lookup
 
@@ -84,7 +122,7 @@ medicine. To check a pack, search by its batch number.
 | `LOG_LEVEL` | no | Default `info` |
 | `ALLOWED_ORIGINS` | no | Comma-separated browser origins. Empty allows none; native apps are unaffected |
 | `BARCODE_RATE_LIMIT` | no | Barcode lookups per client address per 15 minutes. Default `300` |
-| `ALERTS_RATE_LIMIT` | no | Drug alert requests per client address per 15 minutes. Default `300` |
+| `DATA_RATE_LIMIT` | no | Medicine, drug alert and CDSCO registry requests per client address per 15 minutes. Default `300` |
 | `TRUST_PROXY_HOPS` | no | Proxy hops in front of the service. Default `1` |
 
 Put these in `.env` next to this file. Never commit it.

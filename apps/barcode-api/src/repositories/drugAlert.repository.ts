@@ -1,4 +1,5 @@
 import { supabase } from "../db/client";
+import { escapeLike } from "../utils/queryParams";
 
 const ALERT_COLUMNS =
     "id, alert_type, product_name, batch_number, manufacturing_date, expiry_date, manufacturer, reason, remarks, firm_reply, reporting_source, reported_by, reporting_month";
@@ -34,11 +35,6 @@ export interface DrugAlertQuery {
 export interface DrugAlertPage {
     total: number;
     alerts: DrugAlertRow[];
-}
-
-// ilike treats % and _ as wildcards; a user typing them must match them literally.
-function escapeLike(value: string): string {
-    return value.replace(/[\\%_]/g, (ch) => `\\${ch}`);
 }
 
 export const drugAlertRepository = {

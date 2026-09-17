@@ -31,7 +31,7 @@ Please provide as much of the following as possible to help us understand and re
 - A clear description of the vulnerability
 - Steps to reproduce (proof of concept if available)
 - The potential impact (data exposure, authentication bypass, etc.)
-- Affected component (scraping pipeline, barcode API, database schema, workflows)
+- Affected component (scraping pipeline, API, database schema, workflows)
 - Any suggested mitigation or fix
 - The affected version or commit (if known)
 - Any relevant logs, screenshots, or supporting evidence
@@ -73,7 +73,7 @@ The following are **out of scope**:
 SahiDawa is built with the following security principles:
 
 - **No sensitive data sold or shared** — SahiDawa is 100% ad-free and never monetizes user health data
-- **Database key stays on the server** — the barcode API holds the service-role key; apps that call it never receive a database key
+- **Database key stays on the server** — the API holds the service-role key; apps that call it never receive a database key
 - **Environment variables** — All secrets (API keys, DB URLs) are stored in `.env` and never committed (see `.env.example`)
 - **Input validation** — Every barcode the API receives is checked for format and check digit before it reaches the database
 - **Minimal data collection** — We collect only what is necessary to provide the service

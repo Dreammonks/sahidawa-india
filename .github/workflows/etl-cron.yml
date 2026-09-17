@@ -1,23 +1,10 @@
-name: ETL Pipeline (Medicines, Drug Alerts, Stores)
+name: ETL Pipeline (Medicines, Drug Alerts)
 
 on:
   schedule:
-    # Medicine prices: daily at 02:00 UTC (7:30 AM IST)
+    # Daily at 02:00 UTC (7:30 AM IST)
     - cron: '0 2 * * *'
-    # Store locations: weekly on Sunday at 03:00 UTC
-    - cron: '0 3 * * 0'
   workflow_dispatch:
-    inputs:
-      run_stores:
-        description: 'Also run Jan Aushadhi store ETL (imports real PMBJK locations)'
-        required: false
-        default: 'false'
-        type: choice
-        options: ['true', 'false']
-      store_state:
-        description: 'Specific state for store ETL (leave empty for all India)'
-        required: false
-        default: ''
 
 jobs:
   run-medicine-etl:
@@ -78,43 +65,3 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: uv run python run_alerts.py
-
-  run-stores-etl:
-    name: 'Jan Aushadhi Store ETL (weekly)'
-    runs-on: ubuntu-latest
-    # Run on: Sunday cron, or manual dispatch with run_stores=true
-    if: |
-      github.event_name == 'workflow_dispatch' && github.event.inputs.run_stores == 'true' ||
-      github.event.schedule == '0 3 * * 0'
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-
-      - name: Install ETL dependencies
-        working-directory: apps/etl
-        run: uv sync
-
-      - name: Install Playwright browsers
-        working-directory: apps/etl
-        run: uv run playwright install --with-deps chromium
-
-      - name: Run Jan Aushadhi store ETL
-        working-directory: apps/etl
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-        run: |
-          if [ -n "${{ github.event.inputs.store_state }}" ]; then
-            uv run python run_stores.py --state "${{ github.event.inputs.store_state }}"
-          else
-            uv run python run_stores.py
-          fi

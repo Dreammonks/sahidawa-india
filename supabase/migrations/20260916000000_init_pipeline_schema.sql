@@ -1,5 +1,5 @@
 -- =============================================================================
--- SahiDawa — complete schema for the scraping pipeline and the barcode API
+-- SahiDawa — complete schema for the scraping pipeline and the API
 -- =============================================================================
 -- Replaces the 110 migrations that accumulated while SahiDawa was a full
 -- product. Those could not build a working database: four columns the ETL
@@ -13,7 +13,6 @@
 -- supabase/legacy-schema-from-api.sql, which was the real schema of record.
 -- =============================================================================
 
-CREATE EXTENSION IF NOT EXISTS postgis;   -- pharmacies.location
 CREATE EXTENSION IF NOT EXISTS pg_trgm;   -- fuzzy search and CDSCO matching
 
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -73,34 +72,6 @@ CREATE INDEX IF NOT EXISTS idx_medicines_generic_name_trgm
     ON public.medicines USING gin (generic_name gin_trgm_ops);
 CREATE INDEX IF NOT EXISTS idx_medicines_composition_trgm
     ON public.medicines USING gin (composition gin_trgm_ops);
-
--- ─────────────────────────────────────────────────────────────────────────────
--- pharmacies — Jan Aushadhi store locations, scraped weekly
--- ─────────────────────────────────────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS public.pharmacies (
-    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    name          VARCHAR(255) NOT NULL,
-    license_id    VARCHAR(100) UNIQUE,
-    address       TEXT NOT NULL,
-    district      VARCHAR(100) NOT NULL,
-    state         VARCHAR(100) NOT NULL,
-    pincode       VARCHAR(10),
-    store_code    VARCHAR(20),              -- Jan Aushadhi Kendra code, e.g. PMBJK00012
-    phone_number  VARCHAR(20),
-    is_active     BOOLEAN NOT NULL DEFAULT TRUE,
-    location      geography(POINT, 4326),
-    created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
--- The store loader upserts on (name, address), but no constraint ever matched
--- it, so Postgres could not deduplicate and every weekly run re-inserted every
--- shop. This is the fix for that.
-CREATE UNIQUE INDEX IF NOT EXISTS idx_pharmacies_name_address
-    ON public.pharmacies (name, address);
-
-CREATE INDEX IF NOT EXISTS idx_pharmacies_is_active ON public.pharmacies (is_active);
-CREATE INDEX IF NOT EXISTS idx_pharmacies_location
-    ON public.pharmacies USING GIST (location);
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- cdsco_reference — the brand registry the pipeline checks medicines against
@@ -229,19 +200,17 @@ CREATE INDEX IF NOT EXISTS idx_drug_alerts_product_name_trgm
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Supabase grants the anon and authenticated roles full table access by
 -- default, and the anon key is public by design. Without this, anyone holding
--- it could rewrite prices, insert pharmacies or read failed rows (checked
--- 2026-09-17). The pipeline and the barcode API both use the service role,
+-- it could rewrite prices or read failed rows (checked
+-- 2026-09-17). The pipeline and the API both use the service role,
 -- which bypasses RLS. A future read-only consumer gets its own role and policy.
--- pharmacies holds contact names and phone numbers, so it must not be public.
 ALTER TABLE public.medicines ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.pharmacies ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.cdsco_reference ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.etl_failed_rows ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.product_barcodes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.unknown_barcode_scans ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.drug_alerts ENABLE ROW LEVEL SECURITY;
 
-REVOKE ALL ON public.medicines, public.pharmacies, public.cdsco_reference,
+REVOKE ALL ON public.medicines, public.cdsco_reference,
     public.etl_failed_rows, public.product_barcodes, public.unknown_barcode_scans,
     public.drug_alerts
     FROM anon, authenticated;
@@ -265,47 +234,55 @@ $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
 REVOKE ALL ON FUNCTION public.record_unknown_barcode(TEXT) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.record_unknown_barcode(TEXT) TO service_role;
 
--- Trigram search over brand, generic name and composition. Lives in the
--- database so any service can call it without going through an API.
-CREATE OR REPLACE FUNCTION public.search_medicines_text(
-    query_text TEXT,
-    match_count INTEGER DEFAULT 5
+-- Medicine name search for GET /api/v1/medicines. Matches a word inside the
+-- brand, generic name or ingredients, and tolerates small typos ("paracetmol").
+-- Returns ids in best-first order with the total match count, so the API can
+-- page through results; the API then reads the full rows.
+CREATE OR REPLACE FUNCTION public.search_medicines(
+    p_query  TEXT,
+    p_source TEXT DEFAULT NULL,
+    p_limit  INTEGER DEFAULT 20,
+    p_offset INTEGER DEFAULT 0
 )
 RETURNS TABLE (
-    id                 UUID,
-    brand_name         VARCHAR(255),
-    generic_name       VARCHAR(500),
-    manufacturer       VARCHAR(255),
-    composition        TEXT,
-    mrp                NUMERIC(10, 2),
-    jan_aushadhi_price NUMERIC(10, 2),
-    similarity         DOUBLE PRECISION
-) AS $$
-BEGIN
-    RETURN QUERY
-    SELECT
-        m.id, m.brand_name, m.generic_name, m.manufacturer, m.composition,
-        m.mrp, m.jan_aushadhi_price,
-        GREATEST(
-            similarity(COALESCE(m.generic_name, ''), query_text),
-            similarity(COALESCE(m.brand_name, ''), query_text),
-            similarity(COALESCE(m.composition, ''), query_text)
-        )::double precision AS similarity
-    FROM public.medicines m
-    WHERE COALESCE(m.generic_name, '') % query_text
-       OR COALESCE(m.brand_name, '') % query_text
-       OR COALESCE(m.composition, '') % query_text
-    ORDER BY similarity DESC
-    LIMIT GREATEST(match_count, 1);
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
+    id           UUID,
+    match_score  DOUBLE PRECISION,
+    total_count  BIGINT
+)
+LANGUAGE sql
+STABLE
+SET search_path = public, pg_temp
+SET pg_trgm.word_similarity_threshold = 0.5
+AS $$
+    WITH term AS (
+        SELECT lower(btrim(p_query)) AS text,
+               '%' || replace(replace(replace(lower(btrim(p_query)), '\', '\\'), '%', '\%'), '_', '\_') || '%' AS pattern
+    ),
+    matches AS (
+        SELECT m.id,
+               GREATEST(
+                   word_similarity(t.text, lower(COALESCE(m.brand_name, ''))),
+                   word_similarity(t.text, lower(COALESCE(m.generic_name, ''))),
+                   word_similarity(t.text, lower(COALESCE(m.composition, '')))
+               )::double precision AS match_score
+        FROM public.medicines m, term t
+        WHERE (p_source IS NULL OR m.source = p_source)
+          AND (   m.brand_name ILIKE t.pattern
+               OR m.generic_name ILIKE t.pattern
+               OR m.composition ILIKE t.pattern
+               OR t.text <% m.brand_name
+               OR t.text <% m.generic_name
+               OR t.text <% m.composition)
+    )
+    SELECT matches.id, matches.match_score, count(*) OVER () AS total_count
+    FROM matches
+    ORDER BY matches.match_score DESC, matches.id
+    LIMIT LEAST(GREATEST(p_limit, 1), 100)
+    OFFSET GREATEST(p_offset, 0);
+$$;
 
-ALTER FUNCTION public.search_medicines_text(TEXT, INTEGER)
-    SET pg_trgm.similarity_threshold = 0.2;
-
--- SECURITY DEFINER reads past RLS, so callers are limited like the tables are.
-REVOKE ALL ON FUNCTION public.search_medicines_text(TEXT, INTEGER) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.search_medicines_text(TEXT, INTEGER) TO service_role;
+REVOKE ALL ON FUNCTION public.search_medicines(TEXT, TEXT, INTEGER, INTEGER) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.search_medicines(TEXT, TEXT, INTEGER, INTEGER) TO service_role;
 
 -- Fuzzy match a scraped brand against the CDSCO registry. Scores blend product
 -- name similarity (70%) with manufacturer similarity (30%).

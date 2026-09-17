@@ -15,7 +15,7 @@ async function start(): Promise<void> {
     });
 
     app.listen(PORT, () => {
-        logger.info({ message: `Barcode API listening on port ${PORT}` });
+        logger.info({ message: `SahiDawa API listening on port ${PORT}` });
     });
 }
 
