@@ -25,7 +25,7 @@ body:
     id: environment
     attributes:
       label: "🧪 Environment Details"
-      description: "OS, browser, device, version, etc."
+      description: "OS, Node or Python version, how many rows, etc."
 
   - type: textarea
     id: steps
@@ -48,4 +48,3 @@ body:
       options:
         - label: "I agree to follow this project's Code of Conduct"
         - label: "I want to work on this issue"
-        - label: "I am a GSSOC'26 contributor"

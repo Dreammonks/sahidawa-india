@@ -1,34 +1,33 @@
 version: 2
 updates:
-  # Maintain dependencies for npm (Next.js, Node.js)
-  - package-ecosystem: "npm"
-    directory: "/"
-    schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 10
-    groups:
-      dependencies:
-        patterns:
-          - "*"
+    # Barcode API and the workspace root
+    - package-ecosystem: "npm"
+      directory: "/"
+      schedule:
+          interval: "weekly"
+      open-pull-requests-limit: 5
+      groups:
+          dependencies:
+              patterns:
+                  - "*"
 
-  # Maintain dependencies for Python (FastAPI/ML)
-  - package-ecosystem: "pip"
-    directory: "/ml_service"
-    schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 10
-    groups:
-      python-dependencies:
-        patterns:
-          - "*"
+    # Scraping pipeline
+    - package-ecosystem: "pip"
+      directory: "/apps/etl"
+      schedule:
+          interval: "weekly"
+      open-pull-requests-limit: 5
+      groups:
+          python-dependencies:
+              patterns:
+                  - "*"
 
-  # Maintain GitHub Actions dependencies
-  - package-ecosystem: "github-actions"
-    directory: "/"
-    schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 10
-    groups:
-      actions:
-        patterns:
-          - "*"
+    - package-ecosystem: "github-actions"
+      directory: "/"
+      schedule:
+          interval: "weekly"
+      open-pull-requests-limit: 5
+      groups:
+          actions:
+              patterns:
+                  - "*"

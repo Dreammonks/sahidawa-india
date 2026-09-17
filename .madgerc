@@ -1,5 +1,5 @@
 {
-    "fileExtensions": ["ts", "tsx"],
-    "tsConfig": "apps/web/tsconfig.json",
-    "excludeRegExp": ["(^|/)(node_modules|\\.next|dist|build|coverage|\\.turbo)(/|$)"]
+    "fileExtensions": ["ts"],
+    "tsConfig": "apps/barcode-api/tsconfig.json",
+    "excludeRegExp": ["(^|/)(node_modules|dist|build|coverage)(/|$)"]
 }

@@ -1,6 +1,5 @@
 # Dependency directories
 node_modules/
-jspm_packages/
 venv/
 env/
 .venv/
@@ -9,9 +8,8 @@ env/
 dist/
 build/
 out/
-.next/
 
-# Python / ML Service
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
@@ -58,29 +56,11 @@ Thumbs.db
 coverage/
 .nyc_output/
 
-# Vercel CLI output (`vercel pull` writes project.json with org/project IDs here)
-.vercel/
-
 # Temporary files
 .tmp/
 .cache/
-.turbo/
 *.egg-info/
-unassigned_issues.json
-apps/api/temp-uploads/
-
-# Dev / scratch test scripts (not part of the test suite)
-test_tts_live.py
-
-# local model data 
-ml_model_dev_pipeline/.venv/*
-ml_model_dev_pipeline/data
 
 # Scratch / Temporary Dev Scripts
 scratch/
 /reports/
-.lighthouseci
-
-# GSSoC Reports
-pr_data.json
-artifacts/

@@ -16,9 +16,9 @@
 > [!IMPORTANT]
 > **No Pull Request will be merged without proof of testing!**
 >
-> - **Frontend/UI changes:** You MUST attach screenshots or screen recordings (GIFs/Videos) showing the UI changes.
+> - **Pipeline or API changes:** paste the test output, or the request and the response you checked.
 >
-> _Please drag & drop your screenshots/GIFs here:_
+> _Paste output or logs here:_
 
 ## 🏷️ PR Type
 
@@ -28,10 +28,8 @@
 - [ ] 🧪 `type: testing`
 - [ ] 🔒 `type: security`
 - [ ] ⚡ `type: performance`
-- [ ] 🎨 `type: design`
 - [ ] ♻️ `type: refactor`
 - [ ] 🛠️ `type: devops`
-- [ ] ♿ `type: accessibility`
 
 ## ✅ Checklist
 

@@ -9,8 +9,7 @@ body:
     attributes:
       value: |
         ## Thank you for reporting a bug! 🩺
-        Please check [existing issues](https://github.com/RatLoopz/sahidawa-india/issues) first to avoid duplicates.
-        > **GSSoC 2026 contributors:** Comment on the issue to get it assigned before starting work.
+        Please check existing issues first to avoid duplicates.
 
   - type: dropdown
     id: area
@@ -18,14 +17,9 @@ body:
       label: Which part of SahiDawa is broken?
       description: Select the area where you found the bug.
       options:
-        - "Frontend — Next.js UI (apps/web)"
-        - "Backend — Express API (apps/api)"
-        - "ML Service — FastAPI / Python (apps/ml)"
-        - "Medicine Scanner / Verification"
-        - "Pharmacy Map"
-        - "Voice / Multilingual"
-        - "Translation / i18n"
-        - "Database / Supabase"
+        - "Scraping pipeline (apps/etl)"
+        - "Barcode API (apps/barcode-api)"
+        - "Database schema (supabase/)"
         - "Other / Unknown"
     validations:
       required: true
@@ -35,7 +29,7 @@ body:
     attributes:
       label: Bug Description
       description: Clearly describe what went wrong.
-      placeholder: "When I scan a medicine barcode, the app crashes instead of showing the verification result..."
+      placeholder: "GET /api/v1/products/barcode/8901234567890 returns 500 instead of an unknown result..."
     validations:
       required: true
 
@@ -43,25 +37,17 @@ body:
     id: expected
     attributes:
       label: Expected Behavior
-      placeholder: "The app should display a green ✅ verification result."
+      placeholder: "The API should return 200 with status unknown and queue the barcode."
     validations:
       required: true
 
   - type: textarea
-    id: screenshots
+    id: logs
     attributes:
-      label: Screenshots
-      description: Attach screenshots.
+      label: Logs or output
+      description: Paste the request and response, the pipeline log, or the failing test output.
     validations:
       required: false
-
-  - type: checkboxes
-    id: gssoc
-    attributes:
-      label: GSSoC 2026
-      options:
-        - label: I am a GSSoC 2026 participant and would like to fix this bug.
-          required: false
 
   - type: checkboxes
     id: conduct

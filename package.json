@@ -2,85 +2,46 @@
     "name": "sahidawa-india",
     "version": "1.1.0",
     "private": true,
-    "description": "SahiDawa Open Health — Medicine safety infrastructure for Bharat",
+    "description": "Medicine data pipeline and barcode lookup API for Bharat",
     "engines": {
         "node": ">=22.0.0"
     },
     "workspaces": [
-        "apps/*",
-        "packages/*"
+        "apps/*"
     ],
     "scripts": {
-        "dev": "turbo run dev",
-        "build": "turbo run build",
-        "clean": "npx rimraf .turbo node_modules apps/*/node_modules apps/*/.next packages/*/node_modules",
-        "test": "turbo run test",
+        "dev": "npm run dev -w sahidawa-barcode-api",
+        "build": "npm run build -w sahidawa-barcode-api",
+        "test": "npm run test -w sahidawa-barcode-api",
         "lint": "npm run lint --workspaces --if-present",
-        "lint:circular": "npx madge --circular apps/api/src apps/web packages/shared/src packages/types/src packages/validators/src",
-        "test:a11y:voice": "npm run test:a11y:voice -w web",
+        "lint:circular": "npx madge --circular --ts-config apps/barcode-api/tsconfig.json apps/barcode-api/src",
         "prepare": "husky || true",
         "check:migrations": "node scripts/check-migrations.js",
-        "audit:node": "npm audit -w sahidawa-api -w web --audit-level=high",
+        "audit:node": "npm audit -w sahidawa-barcode-api --audit-level=high",
         "audit:python": "node scripts/audit-python.js",
         "audit:all": "npm run audit:node && npm run audit:python"
     },
     "keywords": [
         "medicine",
-        "verification",
+        "barcode",
         "health",
         "cdsco"
     ],
     "author": "",
     "license": "MIT",
     "packageManager": "npm@11.12.1",
-    "dependencies": {
-        "@opentelemetry/propagator-jaeger": "2.10.0",
-        "@supabase/supabase-js": "^2.110.0",
-        "@zxing/library": "0.21.3",
-        "cors": "^2.8.6",
-        "dotenv": "^17.4.2",
-        "express": "^5.2.1",
-        "helmet": "^8.2.0",
-        "jspdf": "^4.2.1",
-        "jspdf-autotable": "^5.0.8",
-        "morgan": "^1.10.1",
-        "rate-limit-redis": "^5.0.0",
-        "react-intersection-observer": "^10.0.3",
-        "redis": "^6.1.0",
-        "winston-daily-rotate-file": "^5.0.0",
-        "zod": "^4.4.3"
-    },
     "devDependencies": {
-        "@parcel/watcher": "^2.5.6",
-        "@types/node": "^20.0.0",
-        "@types/winston": "^2.4.4",
-        "eslint": "^10.6.0",
-        "fake-indexeddb": "^6.2.5",
         "husky": "^9.1.7",
         "lint-staged": "^17.0.8",
         "madge": "^8.0.0",
-        "next": "^16.2.9",
-        "prettier": "^3.9.4",
-        "prettier-plugin-tailwindcss": "^0.8.0",
-        "react-hook-form": "^7.80.0",
-        "react-is": "^19.2.7",
-        "turbo": "^2.10.2"
+        "prettier": "^3.9.4"
     },
     "overrides": {
         "typescript": "5.6.2",
-        "@zxing/library": "0.21.3",
         "postcss": "^8.5.15",
-        "form-data": "^4.0.6",
-        "protobufjs": "^7.6.3",
-        "js-yaml": "^4.1.2",
-        "serialize-javascript": "^7.0.7",
-        "sharp": "^0.35.0",
-        "node-cron": {
-            "uuid": "^9.0.1"
-        },
-        "@opentelemetry/propagator-jaeger": "2.10.0"
+        "form-data": "^4.0.6"
     },
     "lint-staged": {
-        "*.{ts,tsx,js,jsx,md,json}": "prettier --write"
+        "*.{ts,js,md,json}": "prettier --write"
     }
 }

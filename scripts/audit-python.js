@@ -5,10 +5,8 @@ const path = require("path");
 const { execSync } = require("child_process");
 
 const ROOT_DIR = path.resolve(__dirname, "..");
-const ML_REQ_PATH = path.join(ROOT_DIR, "apps/ml/requirements.txt");
 const ETL_TOML_PATH = path.join(ROOT_DIR, "apps/etl/pyproject.toml");
 
-const TEMP_ML_REQ = path.join(ROOT_DIR, "apps/ml/temp-requirements-audit.txt");
 const TEMP_ETL_REQ = path.join(ROOT_DIR, "apps/etl/temp-requirements-audit.txt");
 
 // Colors
@@ -128,46 +126,16 @@ function runAudit() {
         log(c.yellow, "⚠", "pip-audit is not installed.");
         console.log(`  ${c.bold}If you are modifying Python code, please install it:${c.reset}`);
         console.log(`  pip install pip-audit\n`);
-        log(c.yellow, "⚠", "Skipping Python audit gracefully so frontend developers are not blocked.");
+        log(
+            c.yellow,
+            "⚠",
+            "Skipping Python audit gracefully so work outside apps/etl is not blocked."
+        );
         process.exit(0);
     }
 
     let failed = false;
 
-    // 1. Audit ML requirements
-    if (fs.existsSync(ML_REQ_PATH)) {
-        if (hasFileChanged("apps/ml/requirements.txt")) {
-            log(c.cyan, "→", "Preparing ML dependency list...");
-            const content = fs.readFileSync(ML_REQ_PATH, "utf8");
-            const pinned = parseAndPinRequirements(content);
-            fs.writeFileSync(TEMP_ML_REQ, pinned.join("\n"), "utf8");
-
-            try {
-                log(c.cyan, "→", "Auditing apps/ml dependencies...");
-                const output = execSync(`pip-audit -r "${TEMP_ML_REQ}" --no-deps --disable-pip`, {
-                    encoding: "utf8",
-                    stdio: ["pipe", "pipe", "pipe"],
-                });
-                console.log(output);
-                log(c.green, "✔", "No Python vulnerabilities found in apps/ml");
-            } catch (err) {
-                failed = true;
-                log(c.red, "✖", "Vulnerabilities found in apps/ml (or audit failed):");
-                if (err.stdout) console.log(err.stdout);
-                if (err.stderr) console.error(err.stderr);
-            } finally {
-                if (fs.existsSync(TEMP_ML_REQ)) {
-                    fs.unlinkSync(TEMP_ML_REQ);
-                }
-            }
-        } else {
-            log(c.gray, "•", "No changes detected in apps/ml/requirements.txt. Skipping ML audit.");
-        }
-    } else {
-        log(c.yellow, "⚠", "ML requirements file not found at: " + ML_REQ_PATH);
-    }
-
-    // 2. Audit ETL requirements
     if (fs.existsSync(ETL_TOML_PATH)) {
         if (hasFileChanged("apps/etl/pyproject.toml")) {
             log(c.cyan, "→", "Preparing ETL dependency list...");
