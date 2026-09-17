@@ -1,13 +1,13 @@
-# SahiDawa barcode API
+# SahiDawa API
 
-Resolves a product barcode (GTIN) to a product. One endpoint, one job.
+Serves SahiDawa's data over HTTP: product lookup by barcode, and CDSCO drug
+alerts.
 
-It exists so that client apps never hold a Supabase key. The barcode catalogue
-and the unknown-barcode queue both have row level security enabled and grant
-nothing to `anon`, so lookups need the service role — which stays on this
-server.
+It exists so that no app or service ever holds a Supabase key. Every table has
+row level security enabled and grants nothing to `anon`, so reads need the
+service role, which stays on this server.
 
-## The endpoint
+## Barcode lookup
 
 ```
 GET /api/v1/products/barcode/:gtin
@@ -24,6 +24,53 @@ response also states whether CDSCO medicine verification applies — it does not
 for AYUSH, FSSAI or BIS products, and the response says so rather than implying
 the product is unverified.
 
+## Drug alerts
+
+```
+GET /api/v1/drug-alerts
+```
+
+CDSCO's monthly lists of medicine batches that failed a government quality
+test (`nsq`, since 2019) or were found to be fake (`spurious`, since 2025).
+Every field is exactly as CDSCO published it. Loaded daily by
+`apps/etl/run_alerts.py`.
+
+| Query | Example | Meaning |
+|---|---|---|
+| `search` | `paracetamol` | Part of the product name |
+| `batch` | `PEP5001` | Exact batch number, any letter case |
+| `type` | `nsq` or `spurious` | One kind of alert |
+| `month` | `2026-07` | The month CDSCO reported it |
+| `limit` | `20` | Results per page, 1 to 100 (default 20) |
+| `offset` | `40` | Results to skip, for the next page |
+
+```json
+{
+  "status": "ok",
+  "total": 1,
+  "limit": 20,
+  "offset": 0,
+  "alerts": [
+    {
+      "alert_type": "nsq",
+      "product_name": "Pantoprazole Tablets IP",
+      "batch_number": "PEP5001",
+      "manufacturing_date": "Feb-2025",
+      "expiry_date": "Jan-2027",
+      "manufacturer": "Finecure Pharmaceuticals Ltd. PF-5 & 6, Sanand Industrial Estate-II, ...",
+      "reason": "Dissolution test",
+      "reporting_source": "State Lab",
+      "reported_by": "SDT&RL, Bhubaneswar",
+      "reporting_month": "2026-07-01"
+    }
+  ]
+}
+```
+
+Alerts are not linked to rows in `medicines`: an alert names a product and a
+manufacturer as written on the pack, and a wrong link would flag the wrong
+medicine. To check a pack, search by its batch number.
+
 `GET /health` returns `{ "status": "ok" }`.
 
 ## Environment
@@ -36,7 +83,8 @@ the product is unverified.
 | `PORT` | no | Default `4100` |
 | `LOG_LEVEL` | no | Default `info` |
 | `ALLOWED_ORIGINS` | no | Comma-separated browser origins. Empty allows none; native apps are unaffected |
-| `BARCODE_RATE_LIMIT` | no | Lookups per client address per 15 minutes. Default `300` |
+| `BARCODE_RATE_LIMIT` | no | Barcode lookups per client address per 15 minutes. Default `300` |
+| `ALERTS_RATE_LIMIT` | no | Drug alert requests per client address per 15 minutes. Default `300` |
 | `TRUST_PROXY_HOPS` | no | Proxy hops in front of the service. Default `1` |
 
 Put these in `.env` next to this file. Never commit it.
@@ -67,7 +115,6 @@ of demand.
 
 ## Access
 
-The endpoint currently has no authentication — it was a public website feature.
-As a standalone service that means anyone can call it, and every miss writes a
-row to `unknown_barcode_scans`. Decide the access model before exposing it
-publicly.
+The endpoints currently have no authentication. Anyone who can reach the
+server can call them, and every barcode miss writes a row to
+`unknown_barcode_scans`. Decide the access model before exposing it publicly.

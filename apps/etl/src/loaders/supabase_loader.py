@@ -64,6 +64,13 @@ CONFLICT_COLUMNS = {
         "name",
         "address",
     ),
+    "drug_alerts": (
+        "alert_type",
+        "product_name",
+        "batch_number",
+        "manufacturer",
+        "reporting_month",
+    ),
 }
 
 ALLOWED_COLUMNS = {
@@ -106,6 +113,20 @@ ALLOWED_COLUMNS = {
         "phone_number",
         "is_active",
         "location",
+    },
+    "drug_alerts": {
+        "alert_type",
+        "product_name",
+        "batch_number",
+        "manufacturing_date",
+        "expiry_date",
+        "manufacturer",
+        "reason",
+        "remarks",
+        "firm_reply",
+        "reporting_source",
+        "reported_by",
+        "reporting_month",
     },
     "etl_failed_rows": {
         "id",

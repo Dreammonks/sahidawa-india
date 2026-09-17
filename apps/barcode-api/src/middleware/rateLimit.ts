@@ -91,3 +91,19 @@ export const barcodeLimiter = rateLimit({
         });
     },
 });
+
+// Its own budget, so a service paging through alerts cannot use up barcode lookups.
+export const alertsLimiter = rateLimit({
+    skip: () => process.env.NODE_ENV === "test",
+    windowMs: WINDOW_MS,
+    max: Number(process.env.ALERTS_RATE_LIMIT ?? DEFAULT_MAX),
+    standardHeaders: true,
+    legacyHeaders: false,
+    validate: false,
+    store: buildStore("alerts"),
+    handler: (_req, res) => {
+        res.status(429).json({
+            error: "Too many drug alert requests. Please try again later.",
+        });
+    },
+});

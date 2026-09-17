@@ -2,6 +2,7 @@ import express, { NextFunction, Request, Response } from "express";
 import cors from "cors";
 import helmet from "helmet";
 import productsRouter from "./routes/products";
+import drugAlertsRouter from "./routes/drugAlerts";
 import logger from "./utils/logger";
 
 const app = express();
@@ -32,6 +33,7 @@ app.get("/health", (_req: Request, res: Response) => {
 });
 
 app.use("/api/v1/products", productsRouter);
+app.use("/api/v1/drug-alerts", drugAlertsRouter);
 
 app.use((req: Request, res: Response) => {
     res.status(404).json({ status: "error", error: `No route for ${req.method} ${req.path}` });

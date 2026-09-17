@@ -193,6 +193,38 @@ CREATE INDEX IF NOT EXISTS idx_unknown_barcode_scans_last_seen
     ON public.unknown_barcode_scans (last_seen_at DESC);
 
 -- ─────────────────────────────────────────────────────────────────────────────
+-- drug_alerts — CDSCO's monthly lists of batches that failed a quality test
+-- (nsq) or were found to be fake (spurious). Stored as published; not linked
+-- to medicines, because an alert names a product, not one of our rows.
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS public.drug_alerts (
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    alert_type          TEXT NOT NULL CHECK (alert_type IN ('nsq', 'spurious')),
+    product_name        TEXT NOT NULL,
+    batch_number        TEXT,
+    manufacturing_date  TEXT,              -- as published, e.g. "Feb-2025"
+    expiry_date         TEXT,
+    manufacturer        TEXT,              -- as published, usually name and address
+    reason              TEXT,              -- the test the batch failed
+    remarks             TEXT,
+    firm_reply          TEXT,
+    reporting_source    TEXT,
+    reported_by         TEXT,
+    reporting_month     DATE NOT NULL,     -- first day of the month CDSCO reported it
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT drug_alerts_unique_alert
+        UNIQUE NULLS NOT DISTINCT (alert_type, product_name, batch_number, manufacturer, reporting_month)
+);
+
+CREATE INDEX IF NOT EXISTS idx_drug_alerts_batch_number
+    ON public.drug_alerts (lower(batch_number));
+CREATE INDEX IF NOT EXISTS idx_drug_alerts_reporting_month
+    ON public.drug_alerts (reporting_month DESC);
+CREATE INDEX IF NOT EXISTS idx_drug_alerts_product_name_trgm
+    ON public.drug_alerts USING gin (product_name gin_trgm_ops);
+
+-- ─────────────────────────────────────────────────────────────────────────────
 -- Access: service role only
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Supabase grants the anon and authenticated roles full table access by
@@ -207,9 +239,11 @@ ALTER TABLE public.cdsco_reference ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.etl_failed_rows ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.product_barcodes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.unknown_barcode_scans ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.drug_alerts ENABLE ROW LEVEL SECURITY;
 
 REVOKE ALL ON public.medicines, public.pharmacies, public.cdsco_reference,
-    public.etl_failed_rows, public.product_barcodes, public.unknown_barcode_scans
+    public.etl_failed_rows, public.product_barcodes, public.unknown_barcode_scans,
+    public.drug_alerts
     FROM anon, authenticated;
 
 -- ─────────────────────────────────────────────────────────────────────────────

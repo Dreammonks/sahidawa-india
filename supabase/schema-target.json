@@ -115,6 +115,27 @@
       ],
       "rls": true,
       "policies": []
+    },
+    "drug_alerts": {
+      "columns": [
+        "id",
+        "alert_type",
+        "product_name",
+        "batch_number",
+        "manufacturing_date",
+        "expiry_date",
+        "manufacturer",
+        "reason",
+        "remarks",
+        "firm_reply",
+        "reporting_source",
+        "reported_by",
+        "reporting_month",
+        "created_at",
+        "updated_at"
+      ],
+      "rls": true,
+      "policies": []
     }
   }
 }

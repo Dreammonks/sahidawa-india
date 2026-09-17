@@ -57,7 +57,7 @@ python -m venv .venv
 .venv/bin/python demo_small_scrape.py --limit 20   # a small slice of every source
 ```
 
-The full runs are `run_all.py` (medicines) and `run_stores.py` (shops).
+The full runs are `run_all.py` (medicines), `run_alerts.py` (drug alerts) and `run_stores.py` (shops).
 
 ### Barcode API
 

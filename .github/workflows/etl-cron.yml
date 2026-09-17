@@ -1,4 +1,4 @@
-name: ETL Pipeline (Medicines + Stores)
+name: ETL Pipeline (Medicines, Drug Alerts, Stores)
 
 on:
   schedule:
@@ -50,6 +50,34 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: uv run python run_all.py
+
+  # Separate from the medicine job so a failure on one source never stops the other.
+  run-drug-alerts:
+    name: 'CDSCO Drug Alerts (daily)'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install ETL dependencies
+        working-directory: apps/etl
+        run: uv sync
+
+      - name: Load the latest drug alerts
+        working-directory: apps/etl
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: uv run python run_alerts.py
 
   run-stores-etl:
     name: 'Jan Aushadhi Store ETL (weekly)'

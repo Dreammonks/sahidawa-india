@@ -1,27 +1,26 @@
 # SahiDawa
 
-Medicine data for Bharat. This project collects it, stores it, and answers one
-question over HTTP: **what product is this barcode?**
+Medicine data for Bharat. This project collects it, stores it, and serves it
+over HTTP: **what product is this barcode?** and **which medicine batches has
+CDSCO flagged?**
 
-It has no user interface. The apps people actually use — Aushadhi IO's Android
-app and its React web app — read from here.
+It has no user interface. Aushadhi IO's apps and other services get the data
+through the API; nothing reads the database directly.
 
 ```
 Government and public websites
-         │  nightly (medicines) · weekly (shops)
+         │  daily (medicines, drug alerts) · weekly (shops)
          ▼
-   scraping pipeline  ──►  database  ──►  barcode API  ──►  Aushadhi IO
-     (apps/etl)                            (apps/barcode-api)   Android + web
-                             ▲
-                             └── other services read the tables directly
+   scraping pipeline  ──►  database  ──►  API  ──►  Aushadhi IO apps
+     (apps/etl)                   (apps/barcode-api)    and other services
 ```
 
 ## What is here
 
 | Path | What it does |
 |---|---|
-| `apps/etl` | Four scrapers — Jan Aushadhi prices, a commercial medicine dataset, the CDSCO brand registry, Jan Aushadhi shop locations — plus cleaning, CDSCO matching and loading |
-| `apps/barcode-api` | One endpoint: `GET /api/v1/products/barcode/:gtin`. See its own README |
+| `apps/etl` | Five scrapers — Jan Aushadhi prices, a commercial medicine dataset, the CDSCO brand registry, CDSCO drug alerts, Jan Aushadhi shop locations — plus cleaning, CDSCO matching and loading |
+| `apps/barcode-api` | `GET /api/v1/products/barcode/:gtin` and `GET /api/v1/drug-alerts`. See its own README |
 | `supabase/` | The complete schema, in a single migration |
 | `.github/workflows/` | The nightly and weekly scrape, tests, CodeQL |
 
@@ -43,8 +42,9 @@ SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=... .venv/bin/python demo_small_scrap
 ```
 
 `demo_small_scrape.py` takes a deliberately tiny slice from every source and
-prints a before-and-after row count, so you can see data arrive. The full run is
-`run_all.py` for medicines and `run_stores.py` for shops.
+prints a before-and-after row count, so you can see data arrive. The full runs
+are `run_all.py` for medicines, `run_alerts.py` for drug alerts (`--all` loads
+every month since 2019) and `run_stores.py` for shops.
 
 The barcode API:
 
@@ -56,20 +56,18 @@ npm test
 
 ## Reading the data
 
-Medicine search lives in the database, not in an API:
+**Other services use the API, never the database.** Only this project's own
+server holds the database key. Row level security is on for every table and
+the public `anon` key is refused, because it ships inside apps and anyone can
+extract it. `pharmacies` also holds contact names and phone numbers.
 
-```sql
-select * from search_medicines_text('dolo', 5);
-```
+When a service needs data the API does not serve yet, add an endpoint to
+`apps/barcode-api` rather than opening the database.
 
-Tables worth knowing: `medicines`, `pharmacies`, `cdsco_reference`,
-`product_barcodes`, `unknown_barcode_scans`, `etl_failed_rows`.
-
-**Only the service role can read or write any of it.** Row level security is on
-for every table and the public `anon` key is refused, because it ships inside
-apps and anyone can extract it. `pharmacies` also holds contact names and phone
-numbers. A new reader gets its own database role with a `SELECT` policy on the
-tables it needs, never the service-role key.
+Tables: `medicines`, `drug_alerts`, `pharmacies`, `cdsco_reference`,
+`product_barcodes`, `unknown_barcode_scans`, `etl_failed_rows`. The database
+also has a medicine name search, `search_medicines_text('dolo', 5)`, which no
+endpoint serves yet.
 
 ## Two things that will surprise you
 
