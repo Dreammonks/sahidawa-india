@@ -101,9 +101,8 @@ Create an ADR when a decision is:
 - **Cross-cutting** — it affects multiple apps/packages or multiple contributors.
 - **Likely to be questioned later** — future maintainers will want to know *why*.
 
-Examples already documented here: adopting Turborepo (`0001`), Supabase (`0002`),
-Redis caching (`0003`), LangGraph for triage (`0004`), and Next.js for the frontend
-(`0005`).
+Examples already documented here: Supabase (`0002`), Redis caching (`0003`), and
+reducing the project to a data pipeline with one barcode API (`0007`).
 
 ## When **not** to create an ADR
 
@@ -112,8 +111,7 @@ Do **not** create an ADR for:
 - Routine bug fixes, refactors with no behavioral change, or style/formatting.
 - Local implementation details that don't affect the system's shape.
 - Decisions already covered by an existing ADR (extend or supersede instead).
-- Per-PR work tracking — that belongs in [`docs/devtrack/adr/`](../../docs/devtrack/adr/),
-  which records individual contribution-level decisions, not project-wide architecture.
+- Per-PR work tracking — that belongs in the pull request.
 
 ---
 
@@ -144,8 +142,9 @@ Do **not** create an ADR for:
 | ADR | Title | Status |
 | --- | --- | --- |
 | [0006](./0006-record-architecture-decisions.md) | Record Architecture Decisions | accepted |
-| [0001](./0001-use-turborepo-for-monorepo.md) | Use Turborepo for Monorepo Management | accepted |
+| [0001](./0001-use-turborepo-for-monorepo.md) | Use Turborepo for Monorepo Management | superseded by 0007 |
 | [0002](./0002-use-supabase-for-primary-database.md) | Use Supabase for Primary Database and Auth | accepted |
 | [0003](./0003-use-redis-for-cache-aside-pattern.md) | Use Redis for Cache-Aside Pattern | accepted |
-| [0004](./0004-use-langgraph-for-ml-triage.md) | Use LangGraph for ML Triage | accepted |
-| [0005](./0005-use-nextjs-for-frontend.md) | Use Next.js for Frontend | accepted |
+| [0004](./0004-use-langgraph-for-ml-triage.md) | Use LangGraph for ML Triage | superseded by 0007 |
+| [0005](./0005-use-nextjs-for-frontend.md) | Use Next.js for Frontend | superseded by 0007 |
+| [0007](./0007-reduce-to-data-pipeline-and-barcode-api.md) | Reduce SahiDawa to a Data Pipeline and One Barcode API | accepted |

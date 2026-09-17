@@ -18,7 +18,7 @@ The `apps/etl/` workspace is the single source of truth for all data ingestion i
 │                          ▼  raw CSV path                    │
 │  STEP 2  JanAushadhiNormalizer.normalize()                  │
 │          └─ Standardises column names                       │
-│          └─ Extracts strength, dosage_form, schedule        │
+│          └─ Extracts strength and a stated dosage_form      │
 │          └─ Returns pd.DataFrame (10 columns)               │
 │                          │                                  │
 │                          ▼  pd.DataFrame                    │
@@ -32,7 +32,7 @@ The `apps/etl/` workspace is the single source of truth for all data ingestion i
 │          └─ Skips unchanged rows already matching Supabase  │
 │          └─ Batched upserts for changed rows (100/batch)    │
 │          └─ Conflict key: generic_name+brand_name+          │
-│             manufacturer+barcode_id                         │
+│             manufacturer+barcode_id+source_product_code     │
 │          └─ Failed rows → etl_failed_rows table + CSV       │
 └─────────────────────────────────────────────────────────────┘
 ```

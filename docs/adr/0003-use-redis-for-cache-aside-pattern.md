@@ -4,7 +4,7 @@
 * Deciders: SahiDawa Core Team
 * Date: 2026-07-14
 
-Technical Story: [Cache Service Implementation](../../apps/api/src/services/cache.service.ts)
+Technical Story: [Barcode lookup cache](../../apps/barcode-api/src/utils/redis.ts)
 
 ## Context and Problem Statement
 

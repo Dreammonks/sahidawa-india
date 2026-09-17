@@ -1,6 +1,6 @@
 # ADR 0005 - Use Next.js for Frontend
 
-* Status: accepted
+* Status: superseded by [ADR-0007](0007-reduce-to-data-pipeline-and-barcode-api.md)
 * Deciders: SahiDawa Core Team
 * Date: 2026-07-14
 

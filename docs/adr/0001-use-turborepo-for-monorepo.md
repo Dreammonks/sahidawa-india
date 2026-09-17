@@ -1,6 +1,6 @@
 # ADR 0001 - Use Turborepo for Monorepo Management
 
-* Status: accepted
+* Status: superseded by [ADR-0007](0007-reduce-to-data-pipeline-and-barcode-api.md)
 * Deciders: SahiDawa Core Team
 * Date: 2026-07-14
 
