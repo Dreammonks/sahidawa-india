@@ -49,9 +49,7 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          API_BASE_URL: ${{ secrets.API_BASE_URL }}
-          SUPABASE_WEBHOOK_SECRET: ${{ secrets.SUPABASE_WEBHOOK_SECRET }}
-        run: uv run python run_all.py --backfill-ja-price
+        run: uv run python run_all.py
 
   run-stores-etl:
     name: 'Jan Aushadhi Store ETL (weekly)'

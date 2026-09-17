@@ -51,10 +51,10 @@ def send_slack_notification(webhook_url: str, summary_text: str) -> bool:
         )
         response.raise_for_status()
 
-        logger.info("[Notifier] ETL summary notification successfully send ho gayi.")
+        logger.info("[Notifier] Slack ETL summary notification sent successfully.")
         return True
     except Exception as exc:
-        logger.error("[Notifier] Slack webhook notification bhejte waqt error aaya: %s", exc)
+        logger.error("[Notifier] Slack webhook notification failed: %s", exc)
         return False
 
 

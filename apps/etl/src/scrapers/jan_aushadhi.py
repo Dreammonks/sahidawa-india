@@ -1,8 +1,8 @@
 """
 SahiDawa — Jan Aushadhi Scraper + Normalizer
 =============================================
-Migrated from: apps/ml/scrapers/janaushadhi.py
-              apps/ml/etl/normalizer.py
+Originally part of the ML service, which no longer exists.
+
 
 WHY PLAYWRIGHT (not BeautifulSoup):
     Jan Aushadhi's website is a React app. The server sends a blank HTML page,
@@ -28,64 +28,31 @@ from src.utils.logger import logger
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 
-TARGET_URL = "https://janaushadhi.gov.in/productportfolio/ProductmrpList"
+TARGET_URL = "https://janaushadhi.gov.in/product-portfolio/product-mrp-list"
 RAW_DATA_DIR = Path(__file__).resolve().parents[4] / "data" / "raw" / "janaushadhi"
 PROCESSED_DIR = Path(__file__).resolve().parents[4] / "data" / "processed"
 
 
-# ── Category → Schedule Mapping ───────────────────────────────────────────────
-
-CATEGORY_SCHEDULE_MAP = {
-    "analgesic": "H",
-    "antipyretic": "H",
-    "antibiotic": "H",
-    "anti-infective": "H",
-    "antihypertensive": "H",
-    "antidiabetic": "H",
-    "cardiovascular": "H",
-    "gastro": "H",
-    "respiratory": "H",
-    "neurological": "H",
-    "central nervous": "H",
-    "hormonal": "H",
-    "endocrine": "H",
-    "renal": "H",
-    "hepatic": "H",
-    "ophthalmic": "H",
-    "ent": "H",
-    "dental": "H",
-    "oncology": "H",
-    "immunosuppressant": "H",
-    "antipsychotic": "H1",
-    "antidepressant": "H1",
-    "anxiolytic": "H1",
-    "sedative": "H1",
-    "vitamin": "OTC",
-    "mineral": "OTC",
-    "supplement": "OTC",
-    "antacid": "OTC",
-    "laxative": "OTC",
-    "surgical": "OTC",
-    "diagnostic": "OTC",
-    "medical device": "OTC",
-}
-
-UNIT_SIZE_FORM_MAP = [
-    (r"\d+'s", "Tablet"),
-    (r"\d+\s*ml", "Liquid"),
-    (r"\d+\s*mg", "Tablet"),
-    (r"1\s*unit", "Injectable"),
-    (r"tube", "Ointment"),
-    (r"drop", "Eye Drop"),
-    (r"inhaler", "Inhaler"),
-    (r"patch", "Patch"),
-    (r"sachet", "Sachet"),
-    (r"strip", "Tablet"),
-    (r"capsule", "Capsule"),
+# Dosage forms, recognised only where the list itself states them.
+STATED_FORMS = [
+    (r"\btablets?\b", "Tablet"),
+    (r"\bcapsules?\b", "Capsule"),
+    (r"\b(syrup|suspension|solution)\b", "Liquid"),
+    (r"\binjections?\b", "Injectable"),
+    (r"\bdrops?\b", "Drops"),
+    (r"\bointment\b", "Ointment"),
+    (r"\bcream\b", "Cream"),
+    (r"\bgel\b", "Gel"),
+    (r"\binhaler\b", "Inhaler"),
+    (r"\bpatch(es)?\b", "Patch"),
+    (r"\bsachets?\b", "Sachet"),
 ]
 
+# A dose, optionally per a quantity: "100mg", "5 mg per 5 ml". Must match
+# DOSE_PATTERN in commercial_medicine.py so the two sources' strengths line up.
 STRENGTH_PATTERN = re.compile(
-    r"(\d+(?:\.\d+)?)\s*(mg|mcg|g|ml|iu|units?|%)",
+    r"(\d+(?:\.\d+)?)\s*(mg|mcg|g|ml|iu|units?|%)"
+    r"(?:\s*(?:/|\bper\b)\s*(\d+(?:\.\d+)?)?\s*(mg|mcg|g|ml|iu|units?|%))?",
     re.IGNORECASE,
 )
 
@@ -116,6 +83,18 @@ FORM_WORDS = [
 
 # ── Scraper ────────────────────────────────────────────────────────────────────
 
+async def _fetch_free_proxy() -> str | None:
+    """Return a public HTTPS proxy URL, or None when none can be found."""
+    try:
+        from fp.fp import FreeProxy
+
+        # FreeProxy is synchronous and slow; keep it off the event loop.
+        return await asyncio.to_thread(FreeProxy(https=True).get)
+    except Exception as e:
+        logger.warning(f"[JanAushadhi] Failed to fetch proxy: {e}. Proceeding without proxy.")
+        return None
+
+
 class JanAushadhiScraper:
     """
     Headless browser scraper for the Jan Aushadhi product list.
@@ -139,16 +118,15 @@ class JanAushadhiScraper:
             async with async_playwright() as p:
                 browser = await p.chromium.launch(headless=True)
                 try:
-                    # Fetch a free proxy for this attempt
+                    # Free proxies are slow and often dead: through one, the page
+                    # timed out on every attempt while a direct load took 12s
+                    # (2026-09-17). They stay as the retry path because the site
+                    # may refuse connections from outside India, where CI runs.
                     proxy_url = None
-                    try:
-                        from fp.fp import FreeProxy
-                        logger.info(f"[JanAushadhi] Fetching a free proxy for Attempt {attempt}...")
-                        # Run FreeProxy in a thread since it's synchronous and can block the asyncio loop
-                        proxy_url = await asyncio.to_thread(FreeProxy(https=True).get)
-                        logger.info(f"[JanAushadhi] Using Proxy: {proxy_url}")
-                    except Exception as pe:
-                        logger.warning(f"[JanAushadhi] Failed to fetch proxy: {pe}. Proceeding without proxy.")
+                    if attempt > 1:
+                        proxy_url = await _fetch_free_proxy()
+                        if proxy_url:
+                            logger.info(f"[JanAushadhi] Using Proxy: {proxy_url}")
 
                     context_options = {
                         "accept_downloads": True,
@@ -225,7 +203,8 @@ class JanAushadhiNormalizer:
 
     def normalize(self, raw_csv_path: Path) -> pd.DataFrame:
         logger.info(f"[Normalizer] Reading: {raw_csv_path}")
-        df = pd.read_csv(raw_csv_path, encoding="utf-8-sig")
+        # Read as text so Drug Code stays "239", not 239.0.
+        df = pd.read_csv(raw_csv_path, encoding="utf-8-sig", dtype=str)
         logger.info(f"[Normalizer] Loaded {len(df)} raw records. Columns: {list(df.columns)}")
 
         if len(df) == 0:
@@ -243,86 +222,65 @@ class JanAushadhiNormalizer:
 
         df["strength"] = df["raw_name"].apply(self._extract_strength)
         df["generic_name"] = df["raw_name"].apply(self._clean_generic_name)
+        df["composition"] = df["raw_name"].apply(self._strip_form_words)
+        df["source_product_code"] = df.get("drug_code", pd.Series(dtype=str)).str.strip()
 
         unit_col = "unit_size" if "unit_size" in df.columns else None
-        df["dosage_form"] = df[unit_col].apply(self._infer_dosage_form) if unit_col else None
+        df["pack_size"] = df[unit_col].str.strip() if unit_col else None
         df["dosage_form"] = df.apply(
-            lambda row: self._infer_form_from_name(row["raw_name"]) or row.get("dosage_form"),
+            lambda row: self._stated_form(f"{row['raw_name']} {row.get('unit_size') or ''}"),
             axis=1,
         )
 
-        df["schedule"] = (
-            df["group_name"].apply(self._infer_schedule)
-            if "group_name" in df.columns
-            else "H"
-        )
-
         df["brand_name"] = None
-        df["manufacturer"] = "PMBI"
-        df["cdsco_approval_status"] = "approved"
-        df["is_counterfeit_alert"] = False
+        # The list names no maker. PMBI runs the scheme; it does not manufacture.
+        df["manufacturer"] = None
         df["source"] = "janaushadhi"
         df["barcode_id"] = None
-        df["mrp"] = pd.to_numeric(df["mrp"], errors="coerce").fillna(0.0)
+        # 344 products are listed at MRP 0 (2026-09-17): the price is unknown, not free.
+        prices = pd.to_numeric(df["mrp"], errors="coerce")
+        df["mrp"] = prices.where(prices > 0)
         df["jan_aushadhi_price"] = df["mrp"]
 
         output_cols = [
-            "brand_name", "generic_name", "manufacturer", "strength",
-            "dosage_form", "schedule", "cdsco_approval_status",
-            "is_counterfeit_alert", "source", "barcode_id",
+            "brand_name", "generic_name", "manufacturer", "composition", "strength",
+            "dosage_form", "pack_size", "source_product_code", "source", "barcode_id",
             "mrp", "jan_aushadhi_price",
         ]
         result = df[output_cols].copy()
 
+        # Drug Code is Jan Aushadhi's own product ID. The same generic name comes
+        # in several strengths and pack sizes, each with its own code.
+        has_codes = result["source_product_code"].notna().all()
+        dedup_key = ["source_product_code"] if has_codes else ["generic_name", "strength", "dosage_form"]
         before = len(result)
-        result = result.drop_duplicates(subset=["generic_name", "strength", "dosage_form"])
+        result = result.drop_duplicates(subset=dedup_key)
         logger.info(f"[Normalizer] Removed {before - len(result)} duplicates. Final: {len(result)} records")
 
         return result
 
     def _extract_strength(self, name: str) -> str | None:
-        matches = STRENGTH_PATTERN.findall(name)
-        return " + ".join(f"{val}{unit}" for val, unit in matches) if matches else None
+        doses = [
+            f"{val}{unit}" + (f"/{per_val}{per_unit}" if per_unit else "")
+            for val, unit, per_val, per_unit in STRENGTH_PATTERN.findall(name)
+        ]
+        return " + ".join(doses) if doses else None
 
     def _clean_generic_name(self, name: str) -> str:
-        cleaned = STRENGTH_PATTERN.sub("", name)
+        return self._strip_form_words(STRENGTH_PATTERN.sub("", name)) or name
+
+    def _strip_form_words(self, name: str) -> str:
+        cleaned = name
         for word in FORM_WORDS:
             cleaned = re.sub(word, "", cleaned, flags=re.IGNORECASE)
-        cleaned = re.sub(r"\s+", " ", cleaned).strip(" ,+&")
-        return cleaned or name
+        return re.sub(r"\s+", " ", cleaned).strip(" ,+&")
 
-    def _infer_dosage_form(self, unit_size: str) -> str | None:
-        if pd.isna(unit_size):
-            return None
-        unit_lower = str(unit_size).lower().strip()
-        for pattern, form in UNIT_SIZE_FORM_MAP:
-            if re.search(pattern, unit_lower, re.IGNORECASE):
+    def _stated_form(self, text: str) -> str | None:
+        text_lower = text.lower()
+        for pattern, form in STATED_FORMS:
+            if re.search(pattern, text_lower):
                 return form
         return None
-
-    def _infer_form_from_name(self, name: str) -> str | None:
-        name_lower = name.lower()
-        if "tablet" in name_lower:     return "Tablet"
-        if "capsule" in name_lower:    return "Capsule"
-        if "syrup" in name_lower:      return "Liquid"
-        if "injection" in name_lower:  return "Injectable"
-        if "drop" in name_lower:       return "Eye Drop"
-        if "ointment" in name_lower:   return "Ointment"
-        if "cream" in name_lower:      return "Cream"
-        if "gel" in name_lower:        return "Gel"
-        if "inhaler" in name_lower:    return "Inhaler"
-        if "suspension" in name_lower: return "Liquid"
-        if "solution" in name_lower:   return "Liquid"
-        return None
-
-    def _infer_schedule(self, category: str) -> str:
-        if pd.isna(category):
-            return "H"
-        cat_lower = category.lower()
-        for keyword, schedule in CATEGORY_SCHEDULE_MAP.items():
-            if keyword in cat_lower:
-                return schedule
-        return "H"
 
 
 # ── Convenience runner ─────────────────────────────────────────────────────────

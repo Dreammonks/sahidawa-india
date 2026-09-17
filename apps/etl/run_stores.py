@@ -9,7 +9,7 @@ HOW THIS WORKS:
     2. Iterates every State → District dropdown combination
     3. Extracts store name, address, phone, pincode for each store
     4. Geocodes missing GPS coordinates via Nominatim (OSM)
-    5. Upserts into Supabase `pharmacies` table with status='approved'
+    5. Upserts into Supabase `pharmacies` table
 
 WHY:
     The Jan Aushadhi website has no public REST API. The government has

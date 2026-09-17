@@ -46,6 +46,7 @@ from src.validators.cdsco_validator import CDSCOValidator
 from src.loaders.supabase_loader import SupabaseLoader
 from src.utils.alert_dispatcher import dispatch_alerts, format_slack_summary
 from src.utils.logger import logger
+from src.utils.price_linking import link_jan_aushadhi_prices
 import pandas as pd
 
 PIPELINE_NAME = "janaushadhi"
@@ -58,7 +59,6 @@ async def run(
     retry_failed: bool = False,
     refresh_cdsco: bool = False,
     limit: int = None,
-    backfill_ja_price: bool = False,
 ) -> dict | bool:
     _banner("SahiDawa Unified ETL Pipeline")
 
@@ -128,53 +128,8 @@ async def run(
     # ── STEP 2b: LINKING COMMERCIAL TO JAN AUSHADHI ───────────────────────────
     logger.info("STEP 2b — Linking Commercial medicines to Jan Aushadhi generic alternatives...")
 
-    def normalize_gen_name(name: str) -> str:
-        n = str(name).lower().strip()
-        n = n.replace("amoxycillin", "amoxicillin")
-        n = n.replace("clavulanic acid", "clavulanate")
-        n = n.replace("clavulanic", "clavulanate")
-        return n
-
-    # Index Jan Aushadhi medicines for fast O(1) lookups
-    ja_exact_index = {}
-    ja_gen_st_index = {}
-    ja_gen_index = {}
-
-    for _, row in df_ja.iterrows():
-        gen = normalize_gen_name(row["generic_name"])
-        st = str(row["strength"]).lower().strip().replace(" ", "") if pd.notna(row["strength"]) else ""
-        dfm = str(row["dosage_form"]).lower().strip() if pd.notna(row["dosage_form"]) else ""
-        mrp = row["mrp"]
-
-        ja_exact_index[(gen, st, dfm)] = mrp
-        if (gen, st) not in ja_gen_st_index:
-            ja_gen_st_index[(gen, st)] = mrp
-        if gen not in ja_gen_index:
-            ja_gen_index[gen] = mrp
-
-    linked_count = 0
-    jan_aushadhi_prices = []
-
-    for _, row in df_comm.iterrows():
-        gen = normalize_gen_name(row["generic_name"])
-        st = str(row["strength"]).lower().strip().replace(" ", "") if pd.notna(row["strength"]) else ""
-        dfm = str(row["dosage_form"]).lower().strip() if pd.notna(row["dosage_form"]) else ""
-
-        key_exact = (gen, st, dfm)
-        key_gen_st = (gen, st)
-
-        if key_exact in ja_exact_index:
-            jan_aushadhi_prices.append(ja_exact_index[key_exact])
-            linked_count += 1
-        elif key_gen_st in ja_gen_st_index:
-            jan_aushadhi_prices.append(ja_gen_st_index[key_gen_st])
-            linked_count += 1
-        elif gen in ja_gen_index:
-            jan_aushadhi_prices.append(ja_gen_index[gen])
-            linked_count += 1
-        else:
-            jan_aushadhi_prices.append(None)
-
+    jan_aushadhi_prices = link_jan_aushadhi_prices(df_ja, df_comm)
+    linked_count = sum(price is not None for price in jan_aushadhi_prices)
     df_comm["jan_aushadhi_price"] = jan_aushadhi_prices
 
     logger.info(f"Linking complete — {linked_count}/{len(df_comm)} commercial medicines linked to Jan Aushadhi generic pricing")
@@ -212,40 +167,9 @@ async def run(
         )
 
     # ── STEP 3: LOAD ───────────────────────────────────────────────────────────
-    logger.info("STEP 3/4 — Loading into Supabase...")
+    logger.info("STEP 3/3 — Loading into Supabase...")
     stats = loader.load(df)
     stats["validation_skipped"] = validation_skipped
-
-    # ── STEP 4: BACKFILL jan_aushadhi_price ────────────────────────────────────
-    # Fills the jan_aushadhi_price column for commercial medicines that the
-    # Step 2b in-memory linking missed (covers ~99.5% of commercial rows).
-    # Uses NPPA ceiling prices (data/seeds/nppa_ceiling_prices.csv) as the
-    # Jan Aushadhi reference. Safe to skip with --skip-backfill-ja-price.
-    ja_backfill_stats: dict | None = None
-    if backfill_ja_price:
-        logger.info(
-            "STEP 4/4 — Backfilling jan_aushadhi_price for commercial medicines "
-            "(NPPA ceiling prices)..."
-        )
-        ja_backfill_stats = loader.merge_jan_aushadhi_price()
-        stats["ja_backfill"] = ja_backfill_stats
-        logger.info(
-            f"  jan_aushadhi_price backfill — "
-            f"checked: {ja_backfill_stats['checked']}, "
-            f"updated: {ja_backfill_stats['updated']}, "
-            f"skipped: {ja_backfill_stats['skipped']}, "
-            f"failed: {ja_backfill_stats['failed']}"
-        )
-    else:
-        logger.info(
-            "STEP 4/4 — Skipping jan_aushadhi_price backfill "
-            "(pass --backfill-ja-price to enable)."
-        )
-
-    # ── CACHE INVALIDATION ─────────────────────────────────────────────────────
-    # Notify the API server to flush stale Redis entries so users see the fresh
-    # data immediately rather than waiting for TTL expiry.
-    loader.notify_cache_invalidation()
 
     _summary(stats)
     return stats
@@ -271,11 +195,6 @@ def _summary(stats: dict) -> None:
         f"  Success rate     : {stats['success_rate']}%"
         + validation_line
         + (f"\n  Failed rows CSV  : {stats['failed_rows_csv']}" if stats.get("failed_rows_csv") else "")
-        + (
-            f"\n  JA price backfill: {stats['ja_backfill']['updated']} updated, "
-            f"{stats['ja_backfill']['skipped']} skipped"
-            if stats.get("ja_backfill") else ""
-        )
         + f"\n{'='*60}"
     )
 
@@ -292,12 +211,6 @@ if __name__ == "__main__":
                         help="Force re-download of CDSCO reference data")
     parser.add_argument("--limit", type=int, default=None,
                         help="Limit the number of normalized records processed (useful for testing)")
-    parser.add_argument("--backfill-ja-price", action="store_true",
-                        help=(
-                            "After loading, back-fill jan_aushadhi_price on commercial medicines "
-                            "using NPPA ceiling prices (data/seeds/nppa_ceiling_prices.csv). "
-                            "Covers ~99.5%% of commercial rows missing this value."
-                        ))
     args = parser.parse_args()
 
     try:
@@ -308,7 +221,6 @@ if __name__ == "__main__":
                 retry_failed=args.retry_failed,
                 refresh_cdsco=args.refresh_cdsco,
                 limit=args.limit,
-                backfill_ja_price=args.backfill_ja_price,
             )
         )
 

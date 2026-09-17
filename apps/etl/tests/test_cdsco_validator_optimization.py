@@ -277,3 +277,35 @@ def test_cdsco_validator_deduplication():
         assert validated.loc[i, "matched_cdsco_product"] == "Crocin"
         assert validated.loc[i, "matched_cdsco_manufacturer"] == "GSK"
         assert validated.loc[i, "strength"] == f"{(100, 200, 500)[i]}mg"
+
+
+def test_a_candidate_below_the_threshold_is_not_stored_as_a_match():
+    cdsco_data = pd.DataFrame([
+        {"brand_name": "Diclofenac Potassium", "firm_name": "Some Firm"},
+    ])
+    validator = CDSCOValidator(threshold=90)
+    validator.load_reference(cdsco_data)
+
+    input_df = pd.DataFrame([
+        {"brand_name": "Aceclofenac", "manufacturer": None},
+    ])
+    validated = validator.validate(input_df, product_col="brand_name", manufacturer_col="manufacturer")
+
+    assert not bool(validated.loc[0, "is_cdsco_verified"])
+    assert validated.loc[0, "matched_cdsco_product"] is None
+    assert validated.loc[0, "matched_cdsco_manufacturer"] is None
+
+
+def test_a_missing_manufacturer_is_not_matched_as_the_word_none():
+    cdsco_data = pd.DataFrame([
+        {"brand_name": "Crocin Pain Relief", "firm_name": "None Pharma"},
+    ])
+    validator = CDSCOValidator(threshold=80)
+    validator.load_reference(cdsco_data)
+
+    input_df = pd.DataFrame([
+        {"brand_name": "Crocin Pain Relief", "manufacturer": None},
+    ])
+    validated = validator.validate(input_df, product_col="brand_name", manufacturer_col="manufacturer")
+
+    assert validated.loc[0, "manufacturer_match_score"] < 50

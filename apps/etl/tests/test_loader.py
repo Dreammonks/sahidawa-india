@@ -8,12 +8,7 @@ import pandas as pd
 # Ensure src.* imports resolve when running pytest from apps/etl/
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from src.loaders.supabase_loader import (
-    NPPA_CEILING_PRICES_CSV,
-    REPO_ROOT,
-    SupabaseLoader,
-    _resolve_nppa_csv_path,
-)
+from src.loaders.supabase_loader import SupabaseLoader
 
 
 class FakeExecuteResponse:
@@ -47,6 +42,7 @@ class FakeTable:
     def select(self, *_args):
         self.operation = "select"
         self.client.last_select_args = _args
+        self.client.select_calls.append(self.name)
         return self
 
     def update(self, payload):
@@ -155,6 +151,7 @@ class FakeSupabaseClient:
         self.insert_calls = []
         self.update_calls = []
         self.last_select_args = None
+        self.select_calls = []
 
     def table(self, name):
         return FakeTable(name, self)
@@ -606,515 +603,41 @@ def test_load_treats_manufacturer_as_part_of_medicine_identity(tmp_path):
     assert stats["skipped_unchanged"] == 0
     assert len(client.upsert_calls) == 1
     _, _, on_conflict = client.upsert_calls[0]
-    assert on_conflict == "generic_name,brand_name,manufacturer,barcode_id"
+    assert on_conflict == "generic_name,brand_name,manufacturer,barcode_id,source_product_code"
 
 
-# ── Tests for merge_jan_aushadhi_price ───────────────────────────────────────
-
-
-def _write_nppa_csv(path, rows):
-    """Helper: write a minimal NPPA CSV to a temp file for testing."""
-    import csv
-
-    path.mkdir(parents=True, exist_ok=True)
-    csv_path = path / "nppa_ceiling_prices.csv"
-    with open(csv_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=["generic_name", "strength", "mrp"])
-        writer.writeheader()
-        writer.writerows(rows)
-    return csv_path
-
-
-class MergeFakeTable(FakeTable):
-    """FakeTable extended with .is_(), .gt(), and .order() for merge tests."""
-
-    def __init__(self, name, client):
-        super().__init__(name, client)
-        self._is_filters = []
-        self._gt_filters = []
-
-    def is_(self, column, value):
-        self._is_filters.append((column, value))
-        return self
-
-    def gt(self, column, value):
-        self._gt_filters.append((column, value))
-        return self
-
-    def order(self, column):
-        return self
-
-    def range(self, start, end):
-        return self
-
-    def execute(self):
-        if self.operation == "select":
-            rows = list(self.client.medicines)
-
-            for col, val in self.eq_filters:
-                rows = [r for r in rows if r.get(col) == val]
-
-            for col, val in self._is_filters:
-                if val == "null":
-                    rows = [r for r in rows if r.get(col) is None]
-
-            for col, val in self._gt_filters:
-                rows = [r for r in rows if (r.get(col) or "") > val]
-
-            return FakeExecuteResponse(rows)
-
-        return super().execute()
-
-
-class MergeFakeSupabaseClient:
-    """Minimal Supabase fake for merge_jan_aushadhi_price tests."""
-
-    def __init__(self, medicines=None, transient_batch_failures=0):
-        self.medicines = medicines or []
-        self.update_calls = []
-        self.upsert_calls = []
-        self.rpc_calls = []
-        self.transient_batch_failures = transient_batch_failures
-        self.transient_batch_attempts = 0
-        # When set, the RPC returns this as response.data instead of the real
-        # changed-row count — used to exercise short-count / unrecognized shapes.
-        self.rpc_data_override = None
-        self.rpc_override_set = False
-
-    def rpc(self, name, params):
-        """Fake the bulk_update_jan_aushadhi_price RPC: atomic UPDATE by id."""
-        client = self
-
-        class _FakeRpc:
-            def execute(self_inner):
-                client.rpc_calls.append((name, params))
-                updates = params.get("p_updates") or []
-
-                # Mirror the real loader's batch retry surface: a multi-row batch
-                # can hit a transient error before succeeding on a later attempt.
-                if len(updates) > 1:
-                    client.transient_batch_attempts += 1
-                    if (
-                        client.transient_batch_attempts
-                        <= client.transient_batch_failures
-                    ):
-                        raise TimeoutError(
-                            "connection timed out during Jan Aushadhi price bulk RPC"
-                        )
-
-                changed = 0
-                for update in updates:
-                    row_id = update.get("id")
-                    new_price = update.get("jan_aushadhi_price")
-                    if row_id is None or new_price is None:
-                        continue
-                    for med in client.medicines:
-                        if med.get("id") == row_id:
-                            med["jan_aushadhi_price"] = new_price
-                            changed += 1
-                if client.rpc_override_set:
-                    return FakeExecuteResponse(client.rpc_data_override)
-                return FakeExecuteResponse(changed)
-
-        return _FakeRpc()
-
-    def table(self, name):
-        t = MergeFakeTable(name, self)
-        original_execute = t.execute
-
-        def patched_execute():
-            if t.operation == "upsert":
-                payload = t.pending_payload
-                rows = payload if isinstance(payload, list) else [payload]
-                if isinstance(payload, list) and len(payload) > 1:
-                    self.transient_batch_attempts += 1
-                    if self.transient_batch_attempts <= self.transient_batch_failures:
-                        raise TimeoutError(
-                            "connection timed out during Jan Aushadhi price batch upsert"
-                        )
-                for update in rows:
-                    row_id = update.get("id")
-                    for med in self.medicines:
-                        if med.get("id") == row_id:
-                            med.update(update)
-                return FakeExecuteResponse()
-
-            if t.operation == "update":
-                row_id = next((v for c, v in t.eq_filters if c == "id"), None)
-                self.update_calls.append((name, t.pending_update, t.eq_filters))
-                for med in self.medicines:
-                    if med.get("id") == row_id:
-                        med.update(t.pending_update)
-                return FakeExecuteResponse()
-            return original_execute()
-
-        t.execute = patched_execute
-        return t
-
-
-def make_merge_loader(client, tmp_path):
-    loader = SupabaseLoader.__new__(SupabaseLoader)
-    loader.client = client
-    loader.failed_rows_dir = tmp_path
-    loader.pipeline_name = "ja_backfill"
-    return loader
-
-
-def test_resolve_nppa_csv_path_is_cwd_independent(tmp_path, monkeypatch):
-    """Default and relative NPPA paths resolve from the repo root, not cwd."""
-    monkeypatch.chdir(tmp_path)
-
-    assert _resolve_nppa_csv_path() == NPPA_CEILING_PRICES_CSV
-    assert (
-        _resolve_nppa_csv_path("data/seeds/nppa_ceiling_prices.csv")
-        == NPPA_CEILING_PRICES_CSV
-    )
-    assert _resolve_nppa_csv_path("apps/etl/data/seeds/nppa_ceiling_prices.csv") == (
-        REPO_ROOT / "apps" / "etl" / "data" / "seeds" / "nppa_ceiling_prices.csv"
-    )
-
-
-def test_resolve_nppa_csv_path_preserves_absolute_paths(tmp_path):
-    csv_path = tmp_path / "nppa_ceiling_prices.csv"
-
-    assert _resolve_nppa_csv_path(csv_path) == csv_path
-
-
-def test_ja_backfill_updates_null_jan_aushadhi_price_rows(tmp_path):
-    """Basic case: rows with jan_aushadhi_price=None get backfilled from NPPA CSV."""
-    medicines = [
-        {
-            "id": "m1",
-            "generic_name": "Paracetamol",
-            "strength": "500mg",
-            "source": "commercial",
-            "jan_aushadhi_price": None,
-        },
-        {
-            "id": "m2",
-            "generic_name": "Cetirizine",
-            "strength": "10mg",
-            "source": "commercial",
-            "jan_aushadhi_price": None,
-        },
-    ]
-    nppa_csv = _write_nppa_csv(
-        tmp_path,
-        [
-            {"generic_name": "paracetamol", "strength": "500mg", "mrp": "18.50"},
-            {"generic_name": "cetirizine", "strength": "10mg", "mrp": "25.00"},
-        ],
-    )
-    client = MergeFakeSupabaseClient(medicines=medicines)
-    loader = make_merge_loader(client, tmp_path)
-
-    stats = loader.merge_jan_aushadhi_price(nppa_csv=nppa_csv)
-
-    assert stats["updated"] == 2
-    assert stats["skipped"] == 0
-    assert stats["failed"] == 0
-    assert medicines[0]["jan_aushadhi_price"] == 18.50
-    assert medicines[1]["jan_aushadhi_price"] == 25.00
-
-
-def test_ja_backfill_uses_bulk_rpc_with_id_and_price_only(tmp_path):
-    """Regression for #1966: back-fill goes through the bulk_update RPC with a
-    {id, jan_aushadhi_price}-only payload, never a PostgREST upsert (which would
-    fail the medicines.generic_name NOT NULL constraint and fall back to slow
-    row-by-row PATCHes)."""
-    medicines = [
-        {
-            "id": "m1",
-            "generic_name": "Paracetamol",
-            "strength": "500mg",
-            "source": "commercial",
-            "jan_aushadhi_price": None,
-        },
-    ]
-    nppa_csv = _write_nppa_csv(
-        tmp_path,
-        [
-            {"generic_name": "paracetamol", "strength": "500mg", "mrp": "18.50"},
-        ],
-    )
-    client = MergeFakeSupabaseClient(medicines=medicines)
-    loader = make_merge_loader(client, tmp_path)
-
-    stats = loader.merge_jan_aushadhi_price(nppa_csv=nppa_csv)
-
-    assert stats["updated"] == 1
-    assert stats["failed"] == 0
-    # No upsert and no row-by-row fallback were used.
-    assert client.upsert_calls == []
-    assert client.update_calls == []
-    # Exactly one bulk RPC call, carrying only id + jan_aushadhi_price.
-    assert len(client.rpc_calls) == 1
-    name, params = client.rpc_calls[0]
-    assert name == "bulk_update_jan_aushadhi_price"
-    assert params["p_updates"] == [{"id": "m1", "jan_aushadhi_price": 18.50}]
-
-
-def test_ja_backfill_counts_short_rpc_result_as_failed(tmp_path):
-    """If the bulk RPC updates fewer rows than the batch (a row vanished between
-    the page scan and the UPDATE), the shortfall is counted as failed so the
-    checked == updated + skipped + failed invariant holds — not silently dropped."""
-    medicines = [
-        {"id": "m1", "generic_name": "Paracetamol", "jan_aushadhi_price": None},
-    ]
-    client = MergeFakeSupabaseClient(medicines=medicines)
-    loader = make_merge_loader(client, tmp_path)
-
-    # m2 has no matching medicine row, so the RPC reports 1 updated, not 2.
-    batch = [
-        {"id": "m1", "jan_aushadhi_price": 18.50},
-        {"id": "m2", "jan_aushadhi_price": 25.00},
-    ]
-    updated, failed = loader._upsert_ja_price_update_batches(batch, "medicines")
-
-    assert updated == 1
-    assert failed == 1
-    assert medicines[0]["jan_aushadhi_price"] == 18.50
-    assert client.update_calls == []  # no row-by-row fallback was triggered
-
-
-def test_coerce_rpc_updated_count():
-    valid_cases = [
-        (45, 45),
-        ([45], 45),
-        ([{"bulk_update_jan_aushadhi_price": 45}], 45),
-        ([{"value": 45}], 45),
-    ]
-    invalid_cases = [
-        True,
-        [True],
-        [{"value": True}],
-        [{}],
-        [{"value": "45"}],
-        [{"value": 45, "other": 1}],
-        [],
-        [1, 2],
-        None,
+def _medicine_rows(count):
+    return [
+        {"generic_name": f"Medicine {i}", "brand_name": None, "manufacturer": None,
+         "barcode_id": None, "source_product_code": str(i), "mrp": 10.0}
+        for i in range(count)
     ]
 
-    for data, expected in valid_cases:
-        response = SimpleNamespace(data=data)
-        assert SupabaseLoader._coerce_rpc_updated_count(response) == expected
 
-    for data in invalid_cases:
-        response = SimpleNamespace(data=data)
-        assert SupabaseLoader._coerce_rpc_updated_count(response) is None
+def test_load_reads_the_existing_table_once_however_many_batches(tmp_path, monkeypatch):
+    monkeypatch.setattr("src.loaders.supabase_loader.time.sleep", lambda _seconds: None)
+    client = FakeSupabaseClient()
+    loader = make_loader(client, tmp_path)
+
+    stats = loader.load(pd.DataFrame(_medicine_rows(250)))
+
+    assert stats["inserted"] == 250
+    assert client.select_calls.count("medicines") == 1
 
 
-def test_ja_backfill_does_not_warn_for_single_key_rpc_count(tmp_path, monkeypatch):
-    medicines = [
-        {"id": "m1", "generic_name": "Paracetamol", "jan_aushadhi_price": None},
+def test_retrying_failed_rows_reads_the_existing_table_once(tmp_path):
+    retry_rows = [
+        {"id": f"retry-{i}", "pipeline_name": "janaushadhi", "status": "failed",
+         "attempt_count": 1, "row_payload": row}
+        for i, row in enumerate(_medicine_rows(3))
     ]
-    client = MergeFakeSupabaseClient(medicines=medicines)
-    client.rpc_override_set = True
-    client.rpc_data_override = [{"bulk_update_jan_aushadhi_price": 1}]
-    loader = make_merge_loader(client, tmp_path)
-    error_messages = []
-    monkeypatch.setattr(
-        "src.loaders.supabase_loader.logger.error",
-        lambda message: error_messages.append(message),
+    client = FakeSupabaseClient(
+        retry_rows=retry_rows,
+        table_rows={"medicines": [], "etl_failed_rows": retry_rows},
     )
+    loader = make_loader(client, tmp_path)
 
-    batch = [{"id": "m1", "jan_aushadhi_price": 18.50}]
-    updated, failed = loader._upsert_ja_price_update_batches(batch, "medicines")
+    stats = loader.retry_failed_rows()
 
-    assert updated == 1
-    assert failed == 0
-    assert not any("unrecognized count shape" in message for message in error_messages)
-
-
-def test_ja_backfill_assumes_full_batch_on_unrecognized_rpc_shape(
-    tmp_path, monkeypatch
-):
-    """An unrecognized RPC count shape is assumed to be a full success (the RPC
-    committed without raising) rather than miscounted as failed."""
-    medicines = [
-        {"id": "m1", "generic_name": "Paracetamol", "jan_aushadhi_price": None},
-    ]
-    client = MergeFakeSupabaseClient(medicines=medicines)
-    client.rpc_override_set = True
-    client.rpc_data_override = {"unexpected": "shape"}
-    loader = make_merge_loader(client, tmp_path)
-    error_messages = []
-    monkeypatch.setattr(
-        "src.loaders.supabase_loader.logger.error",
-        lambda message: error_messages.append(message),
-    )
-
-    batch = [{"id": "m1", "jan_aushadhi_price": 18.50}]
-    updated, failed = loader._upsert_ja_price_update_batches(batch, "medicines")
-
-    assert updated == 1
-    assert failed == 0
-    assert client.update_calls == []
-    assert any("unrecognized count shape" in message for message in error_messages)
-
-
-def test_ja_backfill_retries_transient_batch_rpc_before_fallback(tmp_path, monkeypatch):
-    medicines = [
-        {
-            "id": "m1",
-            "generic_name": "Paracetamol",
-            "strength": "500mg",
-            "source": "commercial",
-            "jan_aushadhi_price": None,
-        },
-        {
-            "id": "m2",
-            "generic_name": "Cetirizine",
-            "strength": "10mg",
-            "source": "commercial",
-            "jan_aushadhi_price": None,
-        },
-    ]
-    nppa_csv = _write_nppa_csv(
-        tmp_path,
-        [
-            {"generic_name": "paracetamol", "strength": "500mg", "mrp": "18.50"},
-            {"generic_name": "cetirizine", "strength": "10mg", "mrp": "25.00"},
-        ],
-    )
-    client = MergeFakeSupabaseClient(
-        medicines=medicines,
-        transient_batch_failures=2,
-    )
-    loader = make_merge_loader(client, tmp_path)
-    sleep_calls = []
-    monkeypatch.setattr(
-        "src.loaders.supabase_loader.time.sleep",
-        lambda seconds: sleep_calls.append(seconds),
-    )
-
-    stats = loader.merge_jan_aushadhi_price(nppa_csv=nppa_csv)
-
-    assert stats["updated"] == 2
-    assert stats["failed"] == 0
-    assert client.transient_batch_attempts == 3
-    assert len(client.rpc_calls) == 3
-    assert client.update_calls == []
-    assert len(sleep_calls) == 2
-
-    assert 2.1 <= sleep_calls[0] <= 3.0
-    assert 4.1 <= sleep_calls[1] <= 5.0
-    assert medicines[0]["jan_aushadhi_price"] == 18.50
-    assert medicines[1]["jan_aushadhi_price"] == 25.00
-
-
-def test_ja_backfill_does_not_match_iron_against_spironolactone(tmp_path):
-    """Exact-match must prevent 'iron' substring matching 'spironolactone'."""
-    medicines = [
-        {
-            "id": "m1",
-            "generic_name": "Spironolactone",
-            "strength": "25mg",
-            "source": "commercial",
-            "jan_aushadhi_price": None,
-        },
-        {
-            "id": "m2",
-            "generic_name": "Iron",
-            "strength": "100mg",
-            "source": "commercial",
-            "jan_aushadhi_price": None,
-        },
-    ]
-    nppa_csv = _write_nppa_csv(
-        tmp_path,
-        [
-            {"generic_name": "iron", "strength": "100mg", "mrp": "32.00"},
-        ],
-    )
-    client = MergeFakeSupabaseClient(medicines=medicines)
-    loader = make_merge_loader(client, tmp_path)
-
-    stats = loader.merge_jan_aushadhi_price(nppa_csv=nppa_csv)
-
-    spiro = next(m for m in medicines if m["id"] == "m1")
-    iron = next(m for m in medicines if m["id"] == "m2")
-    assert spiro["jan_aushadhi_price"] is None  # NOT updated
-    assert iron["jan_aushadhi_price"] == 32.00  # correctly updated
-    assert stats["updated"] == 1
-    assert stats["skipped"] == 1
-
-
-def test_ja_backfill_uses_strength_specific_price(tmp_path):
-    """Strength-specific rows override the generic fallback."""
-    medicines = [
-        {
-            "id": "para-500",
-            "generic_name": "Paracetamol",
-            "strength": "500mg",
-            "source": "commercial",
-            "jan_aushadhi_price": None,
-        },
-        {
-            "id": "para-650",
-            "generic_name": "Paracetamol",
-            "strength": "650mg",
-            "source": "commercial",
-            "jan_aushadhi_price": None,
-        },
-    ]
-    nppa_csv = _write_nppa_csv(
-        tmp_path,
-        [
-            {"generic_name": "paracetamol", "strength": "500mg", "mrp": "18.50"},
-            {"generic_name": "paracetamol", "strength": "650mg", "mrp": "22.00"},
-        ],
-    )
-    client = MergeFakeSupabaseClient(medicines=medicines)
-    loader = make_merge_loader(client, tmp_path)
-
-    stats = loader.merge_jan_aushadhi_price(nppa_csv=nppa_csv)
-
-    assert (
-        next(m["jan_aushadhi_price"] for m in medicines if m["id"] == "para-500")
-        == 18.50
-    )
-    assert (
-        next(m["jan_aushadhi_price"] for m in medicines if m["id"] == "para-650")
-        == 22.00
-    )
-    assert stats["updated"] == 2
-
-
-def test_ja_backfill_uses_fallback_when_no_strength_match(tmp_path):
-    """If no strength-specific row exists, use the strength-less fallback."""
-    medicines = [
-        {
-            "id": "m1",
-            "generic_name": "Amoxicillin",
-            "strength": "875mg",
-            "source": "commercial",
-            "jan_aushadhi_price": None,
-        },
-    ]
-    # CSV only has 500mg specific — the None-key fallback should be used
-    nppa_csv = _write_nppa_csv(
-        tmp_path,
-        [
-            {"generic_name": "amoxicillin", "strength": "500mg", "mrp": "85.00"},
-        ],
-    )
-    client = MergeFakeSupabaseClient(medicines=medicines)
-    loader = make_merge_loader(client, tmp_path)
-
-    stats = loader.merge_jan_aushadhi_price(nppa_csv=nppa_csv)
-
-    assert medicines[0]["jan_aushadhi_price"] == 85.00
-    assert stats["updated"] == 1
-
-
-def test_ja_backfill_returns_zeros_when_csv_missing(tmp_path):
-    """Graceful failure when NPPA CSV file does not exist."""
-    client = MergeFakeSupabaseClient(medicines=[])
-    loader = make_merge_loader(client, tmp_path)
-    missing_path = tmp_path / "does_not_exist.csv"
-
-    stats = loader.merge_jan_aushadhi_price(nppa_csv=missing_path)
-
-    assert stats == {"checked": 0, "updated": 0, "skipped": 0, "failed": 0}
+    assert stats["inserted"] == 3
+    assert client.select_calls.count("medicines") == 1

@@ -215,8 +215,10 @@ class JanAushadhiStoreScraper:
             "phone_number": df.get("phone", pd.Series(dtype=str)).apply(
                 lambda x: str(x)[:20] if pd.notna(x) and str(x).strip() not in ("", "None", "nan", "0") else None
             ),
-            "is_verified": True,
-            "status": "approved",
+            "store_code": df["kendra_code"].where(df["kendra_code"] != ""),
+            "pincode": df.get("pincode", pd.Series(dtype=str)).apply(
+                lambda x: str(x).strip() if pd.notna(x) and str(x).strip() not in ("", "None", "nan", "0") else None
+            ),
             "is_active": True,
             "location": df["location"],
         })

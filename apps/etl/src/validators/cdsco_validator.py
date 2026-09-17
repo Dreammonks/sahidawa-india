@@ -72,6 +72,11 @@ CDSCO_REFERENCE_TABLE = "cdsco_reference"
 CDSCO_REFERENCE_BATCH_SIZE = 500
 
 
+def _text(value) -> str:
+    """A cell as text, with a missing value as empty rather than the word "None"."""
+    return "" if value is None or pd.isna(value) else str(value)
+
+
 class CDSCOValidator:
     """
     Validates a medicines DataFrame against the CDSCO reference dataset
@@ -231,16 +236,19 @@ class CDSCOValidator:
         # 2. Validate unique pairs and cache
         cache = {}
         for _, row in unique_pairs.iterrows():
-            prod = str(row[product_col])
-            manuf = str(row[manufacturer_col])
+            prod = _text(row[product_col])
+            manuf = _text(row[manufacturer_col])
             cache_key = (prod, manuf)
 
             match_data, score = self._find_best_match_optimized(prod, manuf)
+            # A candidate below the threshold is not a match; storing its name
+            # would record a different product as this one's registry entry.
+            verified = bool(match_data) and score >= self.threshold
             cache[cache_key] = {
-                "is_cdsco_verified": score >= self.threshold,
+                "is_cdsco_verified": verified,
                 "cdsco_match_score": round(score, 2),
-                "matched_cdsco_product": match_data["matched_product"] if match_data else None,
-                "matched_cdsco_manufacturer": match_data["matched_manufacturer"] if match_data else None,
+                "matched_cdsco_product": match_data["matched_product"] if verified else None,
+                "matched_cdsco_manufacturer": match_data["matched_manufacturer"] if verified else None,
                 "product_match_score": match_data["product_score"] if match_data else 0,
                 "manufacturer_match_score": match_data["manufacturer_score"] if match_data else 0,
             }
@@ -248,8 +256,8 @@ class CDSCOValidator:
         # 3. Map back to original rows
         results = []
         for _, row in df.iterrows():
-            prod = str(row.get(product_col, ""))
-            manuf = str(row.get(manufacturer_col, ""))
+            prod = _text(row.get(product_col))
+            manuf = _text(row.get(manufacturer_col))
             val_res = cache.get((prod, manuf))
 
             row_dict = row.to_dict()
@@ -272,24 +280,6 @@ class CDSCOValidator:
         return validated
 
     # ── Private ────────────────────────────────────────────────────────────────
-
-    def _validate_row(self, row: pd.Series, product_col: str, manufacturer_col: str) -> dict:
-        result = row.to_dict()
-        match_data, score = self._find_best_match_optimized(
-            str(row.get(product_col, "")),
-            str(row.get(manufacturer_col, "")),
-        )
-        result["is_cdsco_verified"] = score >= self.threshold
-        result["cdsco_match_score"] = round(score, 2)
-        result["matched_cdsco_product"] = match_data["matched_product"] if match_data else None
-        result["matched_cdsco_manufacturer"] = match_data["matched_manufacturer"] if match_data else None
-        result["product_match_score"] = match_data["product_score"] if match_data else 0
-        result["manufacturer_match_score"] = match_data["manufacturer_score"] if match_data else 0
-        return result
-
-    def _find_best_match(self, product_name: str, manufacturer: str) -> tuple[dict | None, float]:
-        # Legacy method kept for backward compatibility/testing
-        return self._find_best_match_optimized(product_name, manufacturer)
 
     def _find_best_match_optimized(self, product_name: str, manufacturer: str) -> tuple[dict | None, float]:
         norm_product = _normalize_text(product_name)

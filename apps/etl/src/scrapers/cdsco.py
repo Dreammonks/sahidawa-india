@@ -11,7 +11,6 @@ PIPELINE ROLE:
     load()           → returns normalized pd.DataFrame for the validator
 """
 
-import os
 import sys
 import time
 import math
@@ -115,7 +114,7 @@ class CDSCOScraper:
     def _fetch_single_page(self, page_num: int, display_start: int, page_size: int) -> list:
         paginated_url = f"{CDSCO_URL}&iDisplayStart={display_start}&iDisplayLength={page_size}"
         logger.info(f"[CDSCO] Fetching page {page_num} (Offset: {display_start})...")
-        
+
         page_response = None
         for attempt in range(1, 4):
             try:
@@ -140,7 +139,7 @@ class CDSCOScraper:
             raise parse_err
 
         return self._validate_records(data.get("aaData", []), page_num)
-    
+
     def _fetch_sequential_until_empty(self, page_size: int) -> Path:
         """
         Fallback pagination strategy used when the API doesn't return a
@@ -174,11 +173,7 @@ class CDSCOScraper:
 
         logger.info(f"[CDSCO] Sequential pagination completed. Total records fetched: {len(all_records)}")
 
-        SEEDS_DIR.mkdir(parents=True, exist_ok=True)
-        df = pd.DataFrame(all_records)
-        df.to_csv(REFERENCE_CSV, index=False)
-        logger.info(f"[CDSCO] Saved to {REFERENCE_CSV}")
-        return REFERENCE_CSV
+        return self._write_reference_csv(all_records)
 
     def fetch_and_save(self, force: bool = False) -> Path:
         """
@@ -195,25 +190,25 @@ class CDSCOScraper:
             return REFERENCE_CSV
 
         logger.info("[CDSCO] Initializing probe query to determine catalog ceiling dynamically...")
-        
-        page_size = 100 
+
+        page_size = 100
         max_workers = 10
         all_records_map = {}
-       
+
         # Step 1: Probe query to Page 1 to fetch total records metadata
         try:
             paginated_url = f"{CDSCO_URL}&iDisplayStart=0&iDisplayLength={page_size}"
             self.rate_limiter.wait()
             probe_response = self.session.get(paginated_url, timeout=30)
-            
+
             if probe_response.status_code != 200:
                 raise RuntimeError(f"Probe request failed with status code {probe_response.status_code}")
-                
+
             probe_data = probe_response.json()
-            
+
             # Extract total records from metadata fields (fallback to 0 if not present)
             total_records = probe_data.get("iTotalDisplayRecords") or probe_data.get("iTotalRecords") or 0
-            
+
             if total_records == 0:
                 logger.warning(
                     "[CDSCO] Could not extract a valid total record count from API metadata. "
@@ -221,13 +216,28 @@ class CDSCOScraper:
                 )
                 return self._fetch_sequential_until_empty(page_size)
 
+            first_page = self._validate_records(probe_data.get("aaData", []), 1)
+
+            # The endpoint accepts iDisplayStart and iDisplayLength and then ignores
+            # them, returning the whole registry in every response. Asking for
+            # total_records / page_size pages therefore downloads the entire
+            # registry that many times - roughly 1,100 downloads for one sync.
+            # When the first response already holds everything, one request is the
+            # whole job. The pagination below still runs for a server that honours
+            # the parameters.
+            if len(first_page) >= total_records:
+                logger.info(
+                    f"[CDSCO] One response carried all {len(first_page)} records; "
+                    "the endpoint ignores its own pagination parameters. Done in one request."
+                )
+                return self._write_reference_csv(first_page)
+
             # Step 2: Dynamically calculate exact max pages needed
             max_pages = math.ceil(total_records / page_size)
             logger.info(f"[CDSCO] Catalog Metadata Detected — Total Records: {total_records}, Dynamic Ceiling: {max_pages} pages.")
-            
-            # Store first page records to avoid duplicate network overhead
-            all_records_map[1] = self._validate_records(probe_data.get("aaData", []), 1)
-            
+
+            all_records_map[1] = first_page
+
         except Exception as probe_err:
             logger.critical(f"[CDSCO] Failed to initiate probe or calculate dynamic pagination bounds: {probe_err}")
             raise probe_err
@@ -235,11 +245,11 @@ class CDSCOScraper:
         # Step 3: Schedule remaining pages from page 2 onwards
         logger.info(f"[CDSCO] Fetching remaining {max_pages - 1} pages using parallel threads...")
         tasks = [(page_num, (page_num - 1) * page_size, page_size) for page_num in range(2, max_pages + 1)]
-        
+
         try:
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
                 future_to_page = {
-                    executor.submit(self._fetch_single_page, p_num, start, size): p_num 
+                    executor.submit(self._fetch_single_page, p_num, start, size): p_num
                     for p_num, start, size in tasks
                 }
 
@@ -264,11 +274,14 @@ class CDSCOScraper:
             sorted_records.extend(all_records_map[p_num])
 
         logger.info(f"[CDSCO] Pagination completed. Total cumulative records fetched: {len(sorted_records)}")
-        
+
+        return self._write_reference_csv(sorted_records)
+
+    def _write_reference_csv(self, records: list) -> Path:
+        """Save the fetched registry rows and return the CSV path."""
         SEEDS_DIR.mkdir(parents=True, exist_ok=True)
-        df = pd.DataFrame(sorted_records)
-        df.to_csv(REFERENCE_CSV, index=False)
-        logger.info(f"[CDSCO] Saved to {REFERENCE_CSV}")
+        pd.DataFrame(records).to_csv(REFERENCE_CSV, index=False)
+        logger.info(f"[CDSCO] Saved {len(records)} records to {REFERENCE_CSV}")
         return REFERENCE_CSV
 
     def load(self) -> pd.DataFrame:

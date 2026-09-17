@@ -26,6 +26,19 @@ class AwaitableMock:
         return dummy().__await__()
 
 
+TEST_PROXY_URL = "http://proxy.test:8080"
+
+
+@pytest.fixture(autouse=True)
+def mock_free_proxy():
+    """Keeps every test off the real free-proxy list service."""
+    with patch(
+        "src.scrapers.jan_aushadhi._fetch_free_proxy",
+        AsyncMock(return_value=TEST_PROXY_URL),
+    ) as mock_fetch:
+        yield mock_fetch
+
+
 @pytest.fixture
 def mock_playwright():
     with patch("src.scrapers.jan_aushadhi.async_playwright") as mock_ap:
@@ -113,6 +126,58 @@ async def test_scrape_success_no_retry(mock_logger, mock_sleep, mock_playwright)
     mock_sleep.assert_not_called()
     mock_logger.warning.assert_not_called()
     mock_logger.error.assert_not_called()
+
+
+@pytest.mark.asyncio
+@patch("src.scrapers.jan_aushadhi.asyncio.sleep")
+@patch("src.scrapers.jan_aushadhi.logger")
+async def test_first_attempt_connects_directly(mock_logger, mock_sleep, mock_playwright, mock_free_proxy):
+    """A reachable site is scraped without looking up or using a proxy."""
+    await JanAushadhiScraper().scrape()
+
+    mock_free_proxy.assert_not_called()
+    context_options = mock_playwright["browser"].new_context.call_args.kwargs
+    assert "proxy" not in context_options
+
+
+@pytest.mark.asyncio
+@patch("src.scrapers.jan_aushadhi.asyncio.sleep")
+@patch("src.scrapers.jan_aushadhi.logger")
+async def test_retry_after_direct_failure_goes_through_proxy(
+    mock_logger, mock_sleep, mock_playwright, mock_free_proxy
+):
+    """When the direct attempt fails, the next attempt uses a free proxy."""
+    mock_playwright["page"].goto.side_effect = [
+        PlaywrightTimeoutError("blocked"),
+        mock_playwright["response"],
+    ]
+
+    await JanAushadhiScraper().scrape()
+
+    first_call, second_call = mock_playwright["browser"].new_context.call_args_list
+    assert "proxy" not in first_call.kwargs
+    assert second_call.kwargs["proxy"] == {"server": TEST_PROXY_URL}
+    mock_free_proxy.assert_called_once()
+
+
+@pytest.mark.asyncio
+@patch("src.scrapers.jan_aushadhi.asyncio.sleep")
+@patch("src.scrapers.jan_aushadhi.logger")
+async def test_retry_connects_directly_when_no_proxy_is_available(
+    mock_logger, mock_sleep, mock_playwright, mock_free_proxy
+):
+    """A failed proxy lookup does not stop the retry; it goes direct instead."""
+    mock_free_proxy.return_value = None
+    mock_playwright["page"].goto.side_effect = [
+        PlaywrightTimeoutError("blocked"),
+        mock_playwright["response"],
+    ]
+
+    save_path = await JanAushadhiScraper().scrape()
+
+    assert isinstance(save_path, Path)
+    second_call = mock_playwright["browser"].new_context.call_args_list[1]
+    assert "proxy" not in second_call.kwargs
 
 
 @pytest.mark.asyncio

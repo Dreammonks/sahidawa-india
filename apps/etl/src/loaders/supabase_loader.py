@@ -1,13 +1,13 @@
 """
 SahiDawa — Supabase Data Loader
 =================================
-Migrated from: apps/ml/etl/loader.py
+Originally part of the ML service, which no longer exists.
 
 Shared loader used by all ETL pipelines.
 Accepts any normalized pd.DataFrame and upserts it into a Supabase table.
 
 UPSERT STRATEGY:
-    Conflict key: (generic_name, brand_name, manufacturer, barcode_id)
+    Conflict key: (generic_name, brand_name, manufacturer, barcode_id, source_product_code)
     On conflict → UPDATE (handles re-runs and MRP changes safely).
 
 BATCH INSERTS:
@@ -29,7 +29,6 @@ from hashlib import sha256
 from pathlib import Path
 
 import pandas as pd
-import requests
 from dotenv import load_dotenv
 from supabase import Client, create_client
 
@@ -39,34 +38,11 @@ from src.utils.logger import logger
 
 load_dotenv(Path(__file__).resolve().parents[4] / ".env")
 
-REPO_ROOT = Path(__file__).resolve().parents[4]
-NPPA_CEILING_PRICES_CSV = REPO_ROOT / "data" / "seeds" / "nppa_ceiling_prices.csv"
-
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 
 BATCH_SIZE = 100
-
-
-def _resolve_nppa_csv_path(nppa_csv: "Path | str | None" = None) -> Path:
-    """Resolve the NPPA seed CSV independent of the process cwd."""
-    if nppa_csv is None:
-        return NPPA_CEILING_PRICES_CSV
-
-    csv_path = Path(nppa_csv)
-    if csv_path.is_absolute():
-        return csv_path
-
-    return REPO_ROOT / csv_path
-
-
 DELAY_SEC = 0.5
-
-# Postgres RPC (supabase/migrations) for atomic Jan Aushadhi price back-fill.
-# Updates medicines.jan_aushadhi_price in place by id without an INSERT, so the
-# table's NOT NULL columns (e.g. generic_name) are never validated against the
-# {id, jan_aushadhi_price}-only payload.
-JA_PRICE_BULK_RPC = "bulk_update_jan_aushadhi_price"
 BATCH_UPSERT_MAX_ATTEMPTS = 4
 BATCH_UPSERT_INITIAL_BACKOFF_SEC = 2.0
 BATCH_UPSERT_MAX_BACKOFF_SEC = 8.0
@@ -80,6 +56,9 @@ CONFLICT_COLUMNS = {
         "brand_name",
         "manufacturer",
         "barcode_id",
+        # Jan Aushadhi rows have no brand or barcode, so without the source's own
+        # product code every strength of one generic would share a key.
+        "source_product_code",
     ),
     "pharmacies": (
         "name",
@@ -110,6 +89,8 @@ ALLOWED_COLUMNS = {
         "jan_aushadhi_price",
         "strength",
         "dosage_form",
+        "pack_size",
+        "source_product_code",
         "schedule",
         "source",
         "created_at",
@@ -120,9 +101,9 @@ ALLOWED_COLUMNS = {
         "address",
         "district",
         "state",
+        "pincode",
+        "store_code",
         "phone_number",
-        "is_verified",
-        "status",
         "is_active",
         "location",
     },
@@ -238,9 +219,13 @@ class SupabaseLoader:
             )
 
         inserted, failures = 0, []
+        # Read the table once per load. Reading it again for every batch made a
+        # full load cost one whole-table read per 100 rows.
+        existing_by_key = self._load_existing_rows_by_key(records, table)
         records_to_write, skipped_unchanged = self._filter_unchanged_records(
             records,
             table,
+            existing_by_key,
         )
 
         if skipped_unchanged:
@@ -254,9 +239,10 @@ class SupabaseLoader:
             batch = records_to_write[batch_start : batch_start + BATCH_SIZE]
             batch_end = batch_start + len(batch)
             try:
-                self._upsert_batch_payloads_with_retries(
-                    [item["write_payload"] for item in batch],
-                    table,
+                payloads = [item["write_payload"] for item in batch]
+                self._run_upsert_with_transient_retries(
+                    lambda: self._upsert_payloads(payloads, table, existing_by_key),
+                    "Batch upsert",
                 )
                 inserted += len(batch)
                 logger.info(
@@ -267,7 +253,7 @@ class SupabaseLoader:
                 logger.warning(
                     f"[Loader] Batch {batch_start}–{batch_end} ❌ {e} — retrying row-by-row"
                 )
-                bi, bf = self._load_batch_row_by_row(batch, table)
+                bi, bf = self._load_batch_row_by_row(batch, table, existing_by_key)
                 inserted += bi
                 failures.extend(bf)
 
@@ -302,6 +288,7 @@ class SupabaseLoader:
 
         total = len(retry_rows)
         logger.info(f"[Loader] Retrying {total} failed rows from '{RETRY_TABLE}'...")
+        existing_by_key = self._load_existing_rows_by_key(retry_rows, table)
 
         inserted, failures = 0, []
 
@@ -311,7 +298,7 @@ class SupabaseLoader:
             attempt_count = int(retry_row.get("attempt_count") or 0) + 1
 
             try:
-                self._upsert_payloads([row_payload], table)
+                self._upsert_payloads([row_payload], table, existing_by_key)
                 self._update_retry_row(
                     retry_row["id"],
                     {
@@ -350,11 +337,12 @@ class SupabaseLoader:
         self,
         batch: list[dict],
         table: str,
+        existing_by_key: dict[str, dict],
     ) -> tuple[int, list[dict]]:
         inserted, failures = 0, []
         for item in batch:
             try:
-                self._upsert_payloads([item["write_payload"]], table)
+                self._upsert_payloads([item["write_payload"]], table, existing_by_key)
                 inserted += 1
             except Exception as e:
                 failure = self._build_failure(item["payload"], item["row_index"], e)
@@ -362,16 +350,6 @@ class SupabaseLoader:
                 self._log_failure(failure)
                 self._persist_failure(failure, table)
         return inserted, failures
-
-    def _upsert_batch_payloads_with_retries(
-        self,
-        payloads: list[dict],
-        table: str,
-    ) -> None:
-        self._run_upsert_with_transient_retries(
-            lambda: self._upsert_payloads(payloads, table),
-            "Batch upsert",
-        )
 
     def _run_upsert_with_transient_retries(
         self,
@@ -402,30 +380,23 @@ class SupabaseLoader:
                 )
                 time.sleep(wait_seconds)
 
-    def _upsert_payloads(self, payloads: list[dict], table: str) -> None:
+    def _upsert_payloads(
+        self, payloads: list[dict], table: str, existing_by_key: dict[str, dict]
+    ) -> None:
         payloads = [self._prepare_payload(payload, table) for payload in payloads]
         if not payloads:
             return
         conflict_columns = CONFLICT_COLUMNS.get(table)
-        existing_by_key = (
-            self._load_existing_rows_by_key(payloads, table) if conflict_columns else {}
-        )
         payloads = [
             self._omit_null_updates(
                 payload, existing_by_key.get(self._cache_key(payload, table))
             )
             for payload in payloads
         ]
-        if table == "pharmacies":
-            # Since the remote DB doesn't have a unique constraint on (name, address),
-            # we cannot use upsert(..., on_conflict). We perform an insert instead.
-            # Duplicates are already filtered out by _filter_unchanged_records.
-            self.client.table(table).insert(payloads).execute()
-        else:
-            self.client.table(table).upsert(
-                payloads,
-                on_conflict=",".join(conflict_columns) if conflict_columns else None,
-            ).execute()
+        self.client.table(table).upsert(
+            payloads,
+            on_conflict=",".join(conflict_columns) if conflict_columns else None,
+        ).execute()
 
     def _omit_null_updates(self, payload: dict, existing: dict | None) -> dict:
         if not existing:
@@ -476,8 +447,8 @@ class SupabaseLoader:
         self,
         records: list[dict],
         table: str,
+        existing_by_key: dict[str, dict],
     ) -> tuple[list[dict], int]:
-        existing_by_key = self._load_existing_rows_by_key(records, table)
         if not existing_by_key:
             return records, 0
 
@@ -613,9 +584,7 @@ class SupabaseLoader:
         return rows[0] if rows else None
 
     def _update_retry_row(self, row_id: str, payload: dict) -> None:
-        if RETRY_TABLE in ALLOWED_COLUMNS:
-            allowed = ALLOWED_COLUMNS[RETRY_TABLE]
-            payload = {k: v for k, v in payload.items() if k in allowed}
+        payload = self._prepare_payload(payload, RETRY_TABLE)
         self.client.table(RETRY_TABLE).update(payload).eq("id", row_id).execute()
 
     def _safe_update_retry_row(self, row_id: str, payload: dict) -> None:
@@ -727,345 +696,3 @@ class SupabaseLoader:
 
     def _utc_now(self) -> str:
         return datetime.now(timezone.utc).isoformat()
-
-    def notify_cache_invalidation(self) -> None:
-        """
-        Notify the API server to invalidate its Redis cache after an ETL upsert.
-
-        Makes an authenticated POST to the API's ``/api/webhooks/etl/medicines-updated``
-        endpoint so subsequent user requests serve fresh data instead of stale
-        cache entries.
-
-        Fails silently when the API is unreachable or not configured — cache
-        staleness is a performance degradation, not a data-loss event.
-        """
-        api_url = os.getenv("API_BASE_URL")
-        webhook_secret = os.getenv("SUPABASE_WEBHOOK_SECRET")
-
-        if not api_url or not webhook_secret:
-            logger.info(
-                "[Loader] Cache invalidation skipped — "
-                "API_BASE_URL or SUPABASE_WEBHOOK_SECRET not set"
-            )
-            return
-
-        endpoint = f"{api_url.rstrip('/')}/api/webhooks/etl/medicines-updated"
-
-        try:
-            response = requests.post(
-                endpoint,
-                headers={
-                    "Authorization": f"Bearer {webhook_secret}",
-                    "Content-Type": "application/json",
-                },
-                json={},
-                timeout=10,
-            )
-            if response.ok:
-                body = response.json()
-                logger.info(
-                    f"[Loader] Cache invalidation sent — "
-                    f"deleted {body.get('invalidated', 0)} key(s)"
-                )
-            else:
-                logger.warning(
-                    f"[Loader] Cache invalidation returned {response.status_code}: "
-                    f"{response.text[:200]}"
-                )
-        except requests.RequestException as e:
-            logger.warning(f"[Loader] Cache invalidation notification failed: {e}")
-
-    # ── Jan Aushadhi price backfill ──────────────────────────────────────────
-
-    def merge_jan_aushadhi_price(
-        self,
-        nppa_csv: "Path | None" = None,
-        table: str = "medicines",
-        page_size: int = 1000,
-    ) -> dict:
-        """
-        Back-fills ``jan_aushadhi_price`` on commercial medicine rows in *table*
-        where it IS NULL by matching against the NPPA ceiling price CSV.
-
-        WHY THIS EXISTS
-        ---------------
-        SahiDawa's core value proposition is showing users the Jan Aushadhi
-        (generic) alternative price alongside a branded commercial medicine.
-        After a full ETL run, only ~0.5% of commercial medicines have
-        ``jan_aushadhi_price`` populated (linked via run_all.py Step 2b).
-        The remaining 99.5% show nothing — breaking the price comparison feature.
-
-        This method fills that gap using the NPPA ceiling prices CSV
-        (data/seeds/nppa_ceiling_prices.csv) as the Jan Aushadhi reference.
-        NPPA ceiling prices are government-fixed maximum retail prices for
-        generic drugs, which correspond directly to Jan Aushadhi store prices.
-
-        Matching strategy
-        -----------------
-        Priority 1: exact (generic_name, strength) match — most specific
-        Priority 2: exact (generic_name, None)     match — strength-less fallback
-
-        Only commercial rows (source = 'commercial') with jan_aushadhi_price IS
-        NULL are touched. janaushadhi-source rows already have correct prices.
-
-        Parameters
-        ----------
-        nppa_csv:
-            Path to NPPA ceiling price CSV. Defaults to
-            data/seeds/nppa_ceiling_prices.csv at the repository root.
-        table:
-            Target Supabase table (default ``"medicines"``).
-        page_size:
-            Rows fetched per page during cursor scan.
-
-        Returns
-        -------
-        dict with keys: ``checked``, ``updated``, ``skipped``, ``failed``.
-        """
-        import csv as _csv
-
-        csv_path = _resolve_nppa_csv_path(nppa_csv)
-
-        if not csv_path.exists():
-            logger.error(
-                f"[Loader] merge_jan_aushadhi_price: NPPA CSV not found at {csv_path}. "
-                "Ensure data/seeds/nppa_ceiling_prices.csv is committed or pass nppa_csv explicitly."
-            )
-            return {"checked": 0, "updated": 0, "skipped": 0, "failed": 0}
-
-        # Build lookup: (generic_name_lower, strength_lower_or_None) → ja_price
-        # setdefault keeps the FIRST (most specific) entry for each key, so
-        # strength-specific rows added before the None-strength fallback row win.
-        ja_lookup: dict[tuple[str, str | None], float] = {}
-        with open(csv_path, newline="", encoding="utf-8") as f:
-            for row in _csv.DictReader(f):
-                name = str(row.get("generic_name") or "").strip().lower()
-                strength_raw = str(row.get("strength") or "").strip().lower() or None
-                try:
-                    price = float(row.get("mrp") or 0)
-                except ValueError:
-                    continue
-                if name and price > 0:
-                    ja_lookup.setdefault((name, strength_raw), price)
-                    ja_lookup.setdefault((name, None), price)  # fallback key
-
-        if not ja_lookup:
-            logger.warning(
-                "[Loader] merge_jan_aushadhi_price: NPPA CSV loaded but produced no entries."
-            )
-            return {"checked": 0, "updated": 0, "skipped": 0, "failed": 0}
-
-        logger.info(
-            f"[Loader] merge_jan_aushadhi_price: loaded {len(ja_lookup)} lookup entries "
-            f"from {csv_path.name}"
-        )
-
-        checked = updated = skipped = failed = 0
-
-        # Cursor-based pagination — advances by ID so skipped rows (still NULL)
-        # are never re-fetched in an infinite loop.
-        last_id = None
-        while True:
-            query = (
-                self.client.table(table)
-                .select("id, generic_name, strength")
-                .eq("source", "commercial")
-                .is_("jan_aushadhi_price", "null")
-                .order("id")
-                .range(0, page_size - 1)
-            )
-            if last_id:
-                query = query.gt("id", last_id)
-
-            response = query.execute()
-            page: list[dict] = getattr(response, "data", None) or []
-            if not page:
-                break
-
-            page_updates: list[dict] = []
-            for record in page:
-                checked += 1
-                record_id = record.get("id")
-                name_lower = str(record.get("generic_name") or "").strip().lower()
-                strength_raw = record.get("strength")
-                strength_lower = (
-                    str(strength_raw).strip().lower() if strength_raw else None
-                )
-
-                # Prefer (name, strength) then fall back to (name, None)
-                ja_price = ja_lookup.get((name_lower, strength_lower))
-                if ja_price is None:
-                    ja_price = ja_lookup.get((name_lower, None))
-
-                if ja_price is None:
-                    skipped += 1
-                    continue
-
-                page_updates.append({"id": record_id, "jan_aushadhi_price": ja_price})
-
-            if page_updates:
-                page_updated, page_failed = self._upsert_ja_price_update_batches(
-                    page_updates,
-                    table,
-                )
-                updated += page_updated
-                failed += page_failed
-
-            last_id = page[-1].get("id")
-            if len(page) < page_size:
-                break
-
-        logger.info(
-            f"[Loader] merge_jan_aushadhi_price — checked: {checked}, "
-            f"updated: {updated}, skipped: {skipped}, failed: {failed}"
-        )
-        return {
-            "checked": checked,
-            "updated": updated,
-            "skipped": skipped,
-            "failed": failed,
-        }
-
-    def _upsert_ja_price_update_batches(
-        self,
-        updates: list[dict],
-        table: str,
-    ) -> tuple[int, int]:
-        # The bulk RPC updates public.medicines.jan_aushadhi_price in place by id.
-        # Any other table (none today) must not reach it — fall back to per-row
-        # updates so behaviour stays correct if a caller passes a different table.
-        if table != "medicines":
-            return self._update_ja_price_rows_one_by_one(updates, table)
-
-        updated = failed = 0
-        total = len(updates)
-        total_batches = (total + BATCH_SIZE - 1) // BATCH_SIZE
-
-        for batch_start in range(0, total, BATCH_SIZE):
-            batch = updates[batch_start : batch_start + BATCH_SIZE]
-            batch_number = (batch_start // BATCH_SIZE) + 1
-            batch_end = batch_start + len(batch)
-
-            try:
-                response = self._bulk_update_ja_price(
-                    batch, batch_number, total_batches
-                )
-                rpc_count = self._coerce_rpc_updated_count(response)
-                if rpc_count is None:
-                    # RPC committed (no exception → no INSERT, NOT NULL never hit)
-                    # but the row count came back in an unexpected shape. Assume the
-                    # whole batch landed and log loudly so a response-shape change is
-                    # visible rather than silently miscounted.
-                    logger.error(
-                        f"[Loader] merge_jan_aushadhi_price: batch "
-                        f"{batch_number}/{total_batches} bulk RPC returned an "
-                        f"unrecognized count shape {getattr(response, 'data', None)!r}; "
-                        f"assuming all {len(batch)} rows updated"
-                    )
-                    rpc_count = len(batch)
-                updated += rpc_count
-                # The selection guarantees every id was a real, still-NULL row, so a
-                # short count means rows vanished between the page scan and the UPDATE
-                # (e.g. deleted concurrently). Account for them as failed so the
-                # caller's checked == updated + skipped + failed invariant holds.
-                shortfall = len(batch) - rpc_count
-                if shortfall > 0:
-                    failed += shortfall
-                    logger.warning(
-                        f"[Loader] merge_jan_aushadhi_price: batch "
-                        f"{batch_number}/{total_batches} updated {rpc_count}/{len(batch)} "
-                        f"rows; {shortfall} unaccounted (rows missing at UPDATE time) "
-                        f"— counted as failed"
-                    )
-                logger.info(
-                    f"[Loader] merge_jan_aushadhi_price: batch "
-                    f"{batch_number}/{total_batches} updated {rpc_count} rows "
-                    f"({updated}/{total} page matches)"
-                )
-            except Exception as e:
-                logger.error(
-                    f"[Loader] merge_jan_aushadhi_price: batch "
-                    f"{batch_number}/{total_batches} rows {batch_start}-{batch_end} "
-                    f"bulk RPC failed: {e} - retrying row-by-row"
-                )
-                batch_updated, batch_failed = self._update_ja_price_rows_one_by_one(
-                    batch,
-                    table,
-                )
-                updated += batch_updated
-                failed += batch_failed
-
-        return updated, failed
-
-    def _bulk_update_ja_price(
-        self,
-        batch: list[dict],
-        batch_number: int,
-        total_batches: int,
-    ) -> object:
-        """Atomically update one batch via the bulk RPC, with transient retries."""
-        captured: dict = {}
-
-        def _call() -> None:
-            captured["response"] = self.client.rpc(
-                JA_PRICE_BULK_RPC,
-                {"p_updates": batch},
-            ).execute()
-
-        self._run_upsert_with_transient_retries(
-            _call,
-            f"merge_jan_aushadhi_price batch {batch_number}/{total_batches} bulk RPC",
-        )
-        return captured.get("response")
-
-    @staticmethod
-    def _coerce_rpc_updated_count(response: object) -> "int | None":
-        """Read the integer row count returned by the bulk RPC.
-
-        PostgREST returns a scalar function result as the raw value, but tolerate
-        a single-element list containing either the count or a single-key mapping
-        to it. Returns ``None`` when the shape is unrecognized so the caller can
-        decide how to account for it rather than guessing here.
-        """
-        data = getattr(response, "data", None)
-        if isinstance(data, bool):  # bool is an int subclass — exclude it
-            return None
-        if isinstance(data, int):
-            return data
-        if isinstance(data, list) and len(data) == 1:
-            item = data[0]
-            if isinstance(item, bool):
-                return None
-            if isinstance(item, int):
-                return item
-            if isinstance(item, dict) and len(item) == 1:
-                value = next(iter(item.values()))
-                if isinstance(value, bool):
-                    return None
-                if isinstance(value, int):
-                    return value
-        return None
-
-    def _update_ja_price_rows_one_by_one(
-        self,
-        updates: list[dict],
-        table: str,
-    ) -> tuple[int, int]:
-        updated = failed = 0
-
-        for update in updates:
-            record_id = update.get("id")
-            try:
-                self.client.table(table).update(
-                    {"jan_aushadhi_price": update.get("jan_aushadhi_price")}
-                ).eq("id", record_id).execute()
-                updated += 1
-            except Exception as e:
-                logger.warning(
-                    f"[Loader] merge_jan_aushadhi_price: failed row fallback "
-                    f"update id={record_id}, "
-                    f"jan_aushadhi_price={update.get('jan_aushadhi_price')}: {e}"
-                )
-                failed += 1
-
-        return updated, failed
