@@ -40,8 +40,11 @@ def mock_free_proxy():
 
 
 @pytest.fixture
-def mock_playwright():
-    with patch("src.scrapers.jan_aushadhi.async_playwright") as mock_ap:
+def mock_playwright(tmp_path):
+    # The fake download goes to a temporary folder, never to data/raw, where a
+    # real Jan Aushadhi price list may be sitting.
+    with patch("src.scrapers.jan_aushadhi.RAW_DATA_DIR", tmp_path), \
+            patch("src.scrapers.jan_aushadhi.async_playwright") as mock_ap:
         # Mocking the async context manager returned by async_playwright()
         mock_p_instance = MagicMock()
         mock_ap.return_value.__aenter__.return_value = mock_p_instance
@@ -99,15 +102,8 @@ def mock_playwright():
             "page": mock_page,
             "response": mock_response,
             "download": mock_download,
+            "raw_dir": tmp_path,
         }
-
-        # Teardown: Cleanup any dummy CSV files created during test
-        from src.scrapers.jan_aushadhi import RAW_DATA_DIR
-        for f in RAW_DATA_DIR.glob("janaushadhi_raw_*.csv"):
-            try:
-                f.unlink()
-            except Exception:
-                pass
 
 
 @pytest.mark.asyncio

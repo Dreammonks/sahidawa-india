@@ -23,6 +23,7 @@ from pathlib import Path
 import pandas as pd
 from playwright.async_api import Download, Error, async_playwright
 
+from src.utils.doses import format_strength, strip_doses
 from src.utils.logger import logger
 
 
@@ -30,7 +31,6 @@ from src.utils.logger import logger
 
 TARGET_URL = "https://janaushadhi.gov.in/product-portfolio/product-mrp-list"
 RAW_DATA_DIR = Path(__file__).resolve().parents[4] / "data" / "raw" / "janaushadhi"
-PROCESSED_DIR = Path(__file__).resolve().parents[4] / "data" / "processed"
 
 
 # Dosage forms, recognised only where the list itself states them.
@@ -47,14 +47,6 @@ STATED_FORMS = [
     (r"\bpatch(es)?\b", "Patch"),
     (r"\bsachets?\b", "Sachet"),
 ]
-
-# A dose, optionally per a quantity: "100mg", "5 mg per 5 ml". Must match
-# DOSE_PATTERN in commercial_medicine.py so the two sources' strengths line up.
-STRENGTH_PATTERN = re.compile(
-    r"(\d+(?:\.\d+)?)\s*(mg|mcg|g|ml|iu|units?|%)"
-    r"(?:\s*(?:/|\bper\b)\s*(\d+(?:\.\d+)?)?\s*(mg|mcg|g|ml|iu|units?|%))?",
-    re.IGNORECASE,
-)
 
 COLUMN_RENAMES = {
     "sr no": "row_num",
@@ -77,8 +69,13 @@ FORM_WORDS = [
     r"\binfusion\b", r"\bointment\b", r"\bcream\b", r"\bdrops?\b",
     r"\binhaler\b", r"\bpatch\b", r"\bsolution\b", r"\bsuspension\b",
     r"\bpowder\b", r"\bsachet\b", r"\bip\b", r"\bbp\b", r"\busp\b",
-    r"\bgel\b", r"\blotion\b", r"\bspray\b", r"\bpaste\b",
+    r"\bgel\b", r"\blotion\b", r"\bspray\b", r"\bpaste\b", r"\bsolvent\b",
 ]
+
+# Removing form words can strand the words that joined them:
+# "Romiplostim Powder and Solvent for solution for Injection" → "Romiplostim and for for".
+EMPTY_BRACKETS = re.compile(r"\(\s*(?:(?:and|for|of|with|in)\s*)*\)", re.IGNORECASE)
+DANGLING_CONNECTORS = re.compile(r"^(?:(?:and|for|of|with|in)\s+)+|(?:\s+(?:and|for|of|with|in))+$", re.IGNORECASE)
 
 
 # ── Scraper ────────────────────────────────────────────────────────────────────
@@ -220,7 +217,7 @@ class JanAushadhiNormalizer:
         df = df[df["raw_name"] != ""]
         logger.info(f"[Normalizer] Dropped {before - len(df)} rows with empty names")
 
-        df["strength"] = df["raw_name"].apply(self._extract_strength)
+        df["strength"] = df["raw_name"].apply(format_strength)
         df["generic_name"] = df["raw_name"].apply(self._clean_generic_name)
         df["composition"] = df["raw_name"].apply(self._strip_form_words)
         df["source_product_code"] = df.get("drug_code", pd.Series(dtype=str)).str.strip()
@@ -228,7 +225,9 @@ class JanAushadhiNormalizer:
         unit_col = "unit_size" if "unit_size" in df.columns else None
         df["pack_size"] = df[unit_col].str.strip() if unit_col else None
         df["dosage_form"] = df.apply(
-            lambda row: self._stated_form(f"{row['raw_name']} {row.get('unit_size') or ''}"),
+            lambda row: self._stated_form(
+                f"{row['raw_name']} {row['unit_size'] if pd.notna(row.get('unit_size')) else ''}"
+            ),
             axis=1,
         )
 
@@ -259,15 +258,10 @@ class JanAushadhiNormalizer:
 
         return result
 
-    def _extract_strength(self, name: str) -> str | None:
-        doses = [
-            f"{val}{unit}" + (f"/{per_val}{per_unit}" if per_unit else "")
-            for val, unit, per_val, per_unit in STRENGTH_PATTERN.findall(name)
-        ]
-        return " + ".join(doses) if doses else None
-
     def _clean_generic_name(self, name: str) -> str:
-        return self._strip_form_words(STRENGTH_PATTERN.sub("", name)) or name
+        cleaned = EMPTY_BRACKETS.sub(" ", self._strip_form_words(strip_doses(name)))
+        cleaned = re.sub(r"\s+", " ", cleaned).strip()
+        return DANGLING_CONNECTORS.sub("", cleaned).strip() or name
 
     def _strip_form_words(self, name: str) -> str:
         cleaned = name

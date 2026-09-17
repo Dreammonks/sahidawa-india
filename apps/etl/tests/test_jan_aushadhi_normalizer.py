@@ -103,3 +103,71 @@ def test_drops_are_not_assumed_to_be_eye_drops(tmp_path):
     ).iloc[0]
 
     assert row["dosage_form"] == "Drops"
+
+
+def test_doses_in_brackets_leave_a_clean_name_and_lower_case_units(tmp_path):
+    row = normalize_rows(
+        tmp_path,
+        "\"1\",\"2873\",\"Dolutegravir (50 Mg) + Emtricitabine (200 Mg) + Tenofovir Alafenamide (25 Mg) Tablets\",\"30s\",\"0\",\"Anti-retroviral\"",
+    ).iloc[0]
+
+    assert row["generic_name"] == "Dolutegravir + Emtricitabine + Tenofovir Alafenamide"
+    assert row["strength"] == "50mg + 200mg + 25mg"
+
+
+def test_a_volume_stated_after_the_form_applies_to_every_dose(tmp_path):
+    row = normalize_rows(
+        tmp_path,
+        "\"1\",\"955\",\"Mefenamic Acid 50mg and Paracetamol 125mg Suspension per 5ml\",\"60 ml\",\"10.31\",\"Analgesic\"",
+    ).iloc[0]
+
+    assert row["generic_name"] == "Mefenamic Acid and Paracetamol"
+    assert row["strength"] == "50mg/5ml + 125mg/5ml"
+
+
+def test_per_written_without_a_space_still_joins_dose_and_volume(tmp_path):
+    row = normalize_rows(tmp_path, "\"1\",\"77\",\"Cisplatin Injection IP 10 mg per10ml\",\"1s\",\"90\",\"Oncology\"").iloc[0]
+
+    assert row["generic_name"] == "Cisplatin"
+    assert row["strength"] == "10mg/10ml"
+
+
+def test_per_a_pack_unit_is_dropped_from_the_name(tmp_path):
+    row = normalize_rows(
+        tmp_path,
+        "\"1\",\"78\",\"Tiotropium Bromide Inhalation 9mcg per actuation\",\"1s\",\"90\",\"Respiratory\"",
+    ).iloc[0]
+
+    assert row["generic_name"] == "Tiotropium Bromide Inhalation"
+    assert row["strength"] == "9mcg"
+
+
+def test_per_ml_without_a_number_applies_to_every_dose(tmp_path):
+    row = normalize_rows(
+        tmp_path,
+        "\"1\",\"79\",\"Etophyllin 84.7mg and Theophylline 25.3mg Injection per ml\",\"2 ml\",\"9\",\"Respiratory\"",
+    ).iloc[0]
+
+    assert row["generic_name"] == "Etophyllin and Theophylline"
+    assert row["strength"] == "84.7mg/ml + 25.3mg/ml"
+
+
+def test_a_presentation_phrase_leaves_no_dangling_words(tmp_path):
+    row = normalize_rows(
+        tmp_path,
+        '"1","3001","Romiplostim Powder and Solvent for solution for Injection 250mcg per 0.5 vial","1s","0","Oncology"',
+    ).iloc[0]
+
+    assert row["generic_name"] == "Romiplostim"
+
+
+def test_a_missing_pack_size_is_not_read_as_the_word_nan(tmp_path, monkeypatch):
+    seen = []
+    original = JanAushadhiNormalizer._stated_form
+    monkeypatch.setattr(
+        JanAushadhiNormalizer, "_stated_form", lambda self, text: seen.append(text) or original(self, text)
+    )
+
+    normalize_rows(tmp_path, '"1","3002","Paclitaxel Protein Bound Particles","","0","Oncology"')
+
+    assert seen and all("nan" not in text.lower().split() for text in seen)

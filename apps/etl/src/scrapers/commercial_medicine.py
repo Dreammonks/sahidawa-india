@@ -5,26 +5,16 @@ Fetches commercial medicine data from the public Indian Medicine Dataset reposit
 normalizes it, and maps it to our medicines table schema.
 """
 
-import os
 import re
 from pathlib import Path
 import pandas as pd
 import requests
 
+from src.utils.doses import format_strength, strip_doses
 from src.utils.logger import logger
 
 DATASET_URL = "https://raw.githubusercontent.com/junioralive/Indian-Medicine-Dataset/main/DATA/indian_medicine_data.csv"
 RAW_DATA_DIR = Path(__file__).resolve().parents[4] / "data" / "raw" / "commercial"
-
-# A dose, optionally per a quantity: "500mg", "30mg/5ml", "7.5mg/ml".
-# Must match the Jan Aushadhi normalizer's pattern, or strengths stop lining up
-# when commercial medicines are linked to Jan Aushadhi prices.
-DOSE_PATTERN = re.compile(
-    r"(\d+(?:\.\d+)?)\s*(mg|mcg|g|ml|iu|units?|%)"
-    r"(?:\s*(?:/|\bper\b)\s*(\d+(?:\.\d+)?)?\s*(mg|mcg|g|ml|iu|units?|%))?",
-    re.IGNORECASE,
-)
-BRACKETED_DOSE = re.compile(r"\([^)]*\d[^)]*\)")
 
 STATED_FORMS = [
     (r"\btablets?\b", "Tablet"),
@@ -37,6 +27,7 @@ STATED_FORMS = [
     (r"\bgel\b", "Gel"),
     (r"\binhaler\b", "Inhaler"),
 ]
+
 
 class CommercialMedicineScraper:
     """
@@ -101,8 +92,7 @@ class CommercialMedicineNormalizer:
                 return None
             cleaned_parts = []
             for part in comp.split("+"):
-                cleaned = DOSE_PATTERN.sub("", BRACKETED_DOSE.sub("", part))
-                cleaned = re.sub(r"\s+", " ", cleaned).strip(" ,")
+                cleaned = strip_doses(part).strip(" ,")
                 if cleaned:
                     cleaned_parts.append(cleaned)
             return " + ".join(cleaned_parts) if cleaned_parts else comp
@@ -129,13 +119,7 @@ class CommercialMedicineNormalizer:
         df["barcode_id"] = None
 
         def _extract_strength(name: str) -> str | None:
-            if pd.isna(name):
-                return None
-            doses = [
-                f"{val}{unit}" + (f"/{per_val}{per_unit}" if per_unit else "")
-                for val, unit, per_val, per_unit in DOSE_PATTERN.findall(name)
-            ]
-            return " + ".join(doses) if doses else None
+            return None if pd.isna(name) else format_strength(name)
 
         df["strength"] = df["composition"].apply(_extract_strength)
 

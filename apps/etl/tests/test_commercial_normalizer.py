@@ -102,3 +102,13 @@ def test_one_row_per_brand_and_manufacturer(tmp_path):
     )
 
     assert len(df) == 2
+
+
+def test_upper_case_units_are_written_in_lower_case(tmp_path):
+    row = normalize_rows(
+        tmp_path,
+        "7,Tenvir EM Tablet,120,FALSE,Cipla Ltd,allopathy,bottle of 30 tablets,Tenofovir (300 Mg) , Emtricitabine (200 MG)",
+    ).iloc[0]
+
+    assert row["strength"] == "300mg + 200mg"
+    assert row["generic_name"] == "Tenofovir + Emtricitabine"
