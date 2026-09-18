@@ -28,10 +28,22 @@ const router = Router();
  *     responses:
  *       200:
  *         description: Product found, or barcode unknown (status field distinguishes)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ProductLookupResponse'
  *       400:
  *         description: Not a barcode (wrong length or non-digits), or a bad check digit
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
  *       500:
  *         description: Lookup failed
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
  */
 router.get("/barcode/:gtin", barcodeLimiter, async (req: Request, res: Response) => {
     const gtin = String(req.params.gtin ?? "").trim();

@@ -44,18 +44,35 @@ function parseQuery(raw: Query): Parsed<DrugAlertQuery> {
  * @openapi
  * /api/v1/drug-alerts:
  *   get:
+ *     tags:
+ *       - Drug Alerts
  *     summary: CDSCO drug alerts — batches that failed a quality test (nsq) or were found fake (spurious)
  *     parameters:
- *       - { in: query, name: search, schema: { type: string }, description: Part of the product name }
+ *       - { in: query, name: search, schema: { type: string, example: paracetamol }, description: Part of the product name }
  *       - { in: query, name: batch, schema: { type: string }, description: Exact batch number, any letter case }
  *       - { in: query, name: type, schema: { type: string, enum: [nsq, spurious] } }
  *       - { in: query, name: month, schema: { type: string, example: "2026-07" }, description: Month CDSCO reported it }
  *       - { in: query, name: limit, schema: { type: integer, default: 20, maximum: 100 } }
  *       - { in: query, name: offset, schema: { type: integer, default: 0 } }
  *     responses:
- *       200: { description: "Alerts, newest reporting month first, with the total matching count" }
- *       400: { description: A query parameter is invalid }
- *       500: { description: Lookup failed }
+ *       200:
+ *         description: Alerts, newest reporting month first, with the total matching count
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/DrugAlertListResponse'
+ *       400:
+ *         description: A query parameter is invalid
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *       500:
+ *         description: Lookup failed
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
  */
 router.get("/", dataLimiter, async (req: Request, res: Response) => {
     const parsed = parseQuery(req.query);

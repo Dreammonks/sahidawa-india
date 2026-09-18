@@ -5,6 +5,7 @@ import productsRouter from "./routes/products";
 import drugAlertsRouter from "./routes/drugAlerts";
 import medicinesRouter from "./routes/medicines";
 import cdscoBrandsRouter from "./routes/cdscoBrands";
+import { docsRouter, openapiSpec } from "./docs";
 import logger from "./utils/logger";
 
 const app = express();
@@ -30,9 +31,31 @@ app.use(
 
 app.use(express.json({ limit: "16kb" }));
 
+/**
+ * @openapi
+ * /health:
+ *   get:
+ *     tags:
+ *       - Service
+ *     summary: Is the service up
+ *     responses:
+ *       200:
+ *         description: The service is running
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/HealthResponse'
+ */
 app.get("/health", (_req: Request, res: Response) => {
     res.json({ status: "ok", service: "sahidawa-api" });
 });
+
+// The document itself, for generating clients; the page that reads it is /api/docs.
+app.get("/api/docs.json", (_req: Request, res: Response) => {
+    res.json(openapiSpec);
+});
+
+app.use("/api/docs", docsRouter);
 
 app.use("/api/v1/products", productsRouter);
 app.use("/api/v1/drug-alerts", drugAlertsRouter);

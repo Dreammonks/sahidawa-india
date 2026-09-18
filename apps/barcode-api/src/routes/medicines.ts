@@ -52,12 +52,37 @@ function serverError(res: Response, route: string, err: unknown) {
  * @openapi
  * /api/v1/medicines:
  *   get:
+ *     tags:
+ *       - Medicines
  *     summary: List medicines, or search them by brand, generic name or ingredient
+ *     description: >
+ *       Without a search term the list is ordered by generic name. With one, the
+ *       database ranks the matches and the best come first. total counts every row
+ *       matching the query, not just the page returned.
  *     parameters:
- *       - { in: query, name: search, schema: { type: string }, description: "Name or ingredient; small typos are tolerated. Results come best match first." }
+ *       - { in: query, name: search, schema: { type: string, example: azithromycin }, description: "Name or ingredient; small typos are tolerated. Results come best match first." }
  *       - { in: query, name: source, schema: { type: string, enum: [janaushadhi, commercial] } }
  *       - { in: query, name: limit, schema: { type: integer, default: 20, maximum: 100 } }
- *       - { in: query, name: offset, schema: { type: integer, default: 0 } }
+ *       - { in: query, name: offset, schema: { type: integer, default: 0, maximum: 10000 } }
+ *     responses:
+ *       200:
+ *         description: A page of medicines
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/MedicineListResponse'
+ *       400:
+ *         description: A query parameter is invalid
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *       500:
+ *         description: Lookup failed
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
  */
 router.get("/", dataLimiter, async (req: Request, res: Response) => {
     const parsed = parseList(req.query);
@@ -87,7 +112,42 @@ router.get("/", dataLimiter, async (req: Request, res: Response) => {
  * @openapi
  * /api/v1/medicines/{id}:
  *   get:
+ *     tags:
+ *       - Medicines
  *     summary: One medicine, including its Jan Aushadhi equivalent price when one is known
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *           example: d4b870dc-7dde-4bca-a53f-e5fced857c72
+ *     responses:
+ *       200:
+ *         description: The medicine
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/MedicineResponse'
+ *       400:
+ *         description: The id is not a UUID
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *       404:
+ *         description: No medicine with this id
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *       500:
+ *         description: Lookup failed
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
  */
 router.get("/:id", dataLimiter, async (req: Request, res: Response) => {
     const id = String(req.params.id ?? "");

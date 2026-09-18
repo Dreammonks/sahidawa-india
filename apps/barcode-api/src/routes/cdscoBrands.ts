@@ -31,15 +31,38 @@ function parseQuery(raw: Query): Parsed<CdscoBrandQuery> {
  * @openapi
  * /api/v1/cdsco-brands:
  *   get:
+ *     tags:
+ *       - CDSCO Registry
  *     summary: Check a brand against the CDSCO brand registry
  *     description: >
  *       Returns the closest registry entries, best first. match_score blends brand
  *       similarity (70%) and manufacturer similarity (30%). is_match compares match_score
  *       to match_threshold, or product_score when no manufacturer is given (matched_on says which).
+ *       The same threshold and weighting the pipeline uses, so a verdict here cannot
+ *       disagree with the one stored on a medicine.
  *     parameters:
- *       - { in: query, name: brand, required: true, schema: { type: string } }
- *       - { in: query, name: manufacturer, schema: { type: string } }
+ *       - { in: query, name: brand, required: true, schema: { type: string, example: dolo 650 }, description: "2 to 100 characters. Required — this is a comparison, not a listing." }
+ *       - { in: query, name: manufacturer, schema: { type: string, example: micro labs } }
  *       - { in: query, name: limit, schema: { type: integer, default: 5, maximum: 20 } }
+ *     responses:
+ *       200:
+ *         description: The closest registry entries
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/CdscoBrandResponse'
+ *       400:
+ *         description: brand is missing or a parameter is invalid
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *       500:
+ *         description: Lookup failed
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
  */
 router.get("/", dataLimiter, async (req: Request, res: Response) => {
     const parsed = parseQuery(req.query);

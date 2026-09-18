@@ -111,6 +111,14 @@ medicine. To check a pack, search by its batch number.
 
 `GET /health` returns `{ "status": "ok" }`.
 
+## Browsing the API
+
+`GET /api/docs` is a Swagger page built from the annotations on the routes, with
+every parameter and response documented and a button that calls the endpoint.
+`GET /api/docs.json` is the same document as OpenAPI 3.0.3, for generating a
+client. Both describe whichever host serves them, so they work behind a tunnel
+or a deployment without being reconfigured.
+
 ## Environment
 
 | Variable | Required | Meaning |
